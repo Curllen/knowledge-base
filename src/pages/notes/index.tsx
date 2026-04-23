@@ -22,7 +22,6 @@ import {
   theme as antdTheme,
 } from "antd";
 import {
-  Plus,
   Search,
   Trash2,
   Archive,
@@ -45,6 +44,8 @@ import { useTabsStore } from "@/store/tabs";
 import { useAppStore } from "@/store";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { NewNoteButton } from "@/components/NewNoteButton";
+import { createBlankAndOpen } from "@/lib/noteCreator";
 import type { Note, PageResult, Folder } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
@@ -296,7 +297,7 @@ export default function NoteListPage() {
     loadNotes(1);
   }, [folderId]);
 
-  // 监听全局"刷新"触发器：CreateNoteModal 任何方式创建/导入完成后自动重拉
+  // 监听全局"刷新"触发器：任何创建/导入流程完成后都会 bump，触发列表重拉
   const notesRefreshTick = useAppStore((s) => s.notesRefreshTick);
   useEffect(() => {
     if (notesRefreshTick > 0) loadNotes(1);
@@ -545,13 +546,7 @@ export default function NoteListPage() {
               全部移到回收站
             </Button>
           )}
-          <Button
-            type="primary"
-            icon={<Plus size={16} />}
-            onClick={() => useAppStore.getState().openCreateModal()}
-          >
-            新建笔记
-          </Button>
+          <NewNoteButton folderId={folderId ? Number(folderId) : null} />
         </Space>
       </div>
 
@@ -738,7 +733,9 @@ export default function NoteListPage() {
             <EmptyState
               description="暂无笔记"
               actionText="创建第一篇笔记"
-              onAction={() => useAppStore.getState().openCreateModal()}
+              onAction={() =>
+                createBlankAndOpen(folderId ? Number(folderId) : null, navigate)
+              }
             />
           )}
         </>
@@ -814,13 +811,15 @@ export default function NoteListPage() {
             <EmptyState
               description="暂无笔记"
               actionText="创建第一篇笔记"
-              onAction={() => useAppStore.getState().openCreateModal()}
+              onAction={() =>
+                createBlankAndOpen(folderId ? Number(folderId) : null, navigate)
+              }
             />
           )}
         </>
       )}
 
-      {/* "新建笔记"已统一到全局 CreateNoteModal（挂在 AppLayout） */}
+      {/* "新建笔记"入口已统一到 NewNoteButton 分段按钮 */}
     </div>
   );
 }

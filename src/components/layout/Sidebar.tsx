@@ -175,7 +175,15 @@ export function Sidebar() {
     function handleMouseDown(e: MouseEvent) {
       if (e.button === 2) return; // 右键另建新菜单，由 onRightClick 处理
       const target = e.target as HTMLElement | null;
-      if (target && target.closest(".ant-dropdown")) return;
+      // antd 5 的 submenu popup 在独立 portal（.ant-dropdown-menu-submenu-popup），
+      // 不在 .ant-dropdown 子树里；只查 .ant-dropdown 会把子菜单点击误杀掉。
+      if (
+        target &&
+        target.closest(
+          ".ant-dropdown, .ant-dropdown-menu, .ant-dropdown-menu-submenu-popup",
+        )
+      )
+        return;
       setContextMenu(null);
     }
     function handleKey(e: KeyboardEvent) {
@@ -492,29 +500,22 @@ export function Sidebar() {
       },
       { type: "divider" },
       {
-        key: "import",
+        key: "import-md-files",
         icon: <FolderInput size={14} />,
-        label: "导入到此",
-        children: [
-          {
-            key: "import-md-files",
-            icon: <FileText size={14} />,
-            label: "Markdown 文件…",
-            onClick: () => {
-              void handleImportMdFiles(key);
-              close();
-            },
-          },
-          {
-            key: "import-md-folder",
-            icon: <FolderOpen size={14} />,
-            label: "Markdown 文件夹（保留层级）…",
-            onClick: () => {
-              void handleImportMdFolder(key);
-              close();
-            },
-          },
-        ],
+        label: "导入 Markdown 文件…",
+        onClick: () => {
+          void handleImportMdFiles(key);
+          close();
+        },
+      },
+      {
+        key: "import-md-folder",
+        icon: <FolderOpen size={14} />,
+        label: "导入 Markdown 文件夹…",
+        onClick: () => {
+          void handleImportMdFolder(key);
+          close();
+        },
       },
       { type: "divider" },
       {

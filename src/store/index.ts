@@ -20,8 +20,6 @@ interface AppStore {
   sidebarCollapsed: boolean;
   /** 专注模式 */
   focusMode: boolean;
-  /** "新建笔记" Modal 全局开关 */
-  createModalOpen: boolean;
   /** 笔记列表刷新触发器：递增即触发各页面重新拉数据 */
   notesRefreshTick: number;
   /** 文件夹列表刷新触发器：Sidebar CRUD 后递增，编辑器/列表/设置页自动重拉 */
@@ -46,10 +44,6 @@ interface AppStore {
   toggleSidebar: () => void;
   /** 设置专注模式 */
   setFocusMode: (on: boolean) => void;
-  /** 打开"新建笔记" Modal */
-  openCreateModal: () => void;
-  /** 关闭"新建笔记" Modal */
-  closeCreateModal: () => void;
   /** 触发所有监听笔记列表的页面刷新（导入/创建后调用） */
   bumpNotesRefresh: () => void;
   /** 触发所有文件夹下拉/列表刷新（Sidebar 增删改/拖拽后调用） */
@@ -72,7 +66,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   themeCategory: "light",
   sidebarCollapsed: false,
   focusMode: false,
-  createModalOpen: false,
   notesRefreshTick: 0,
   foldersRefreshTick: 0,
   tagsRefreshTick: 0,
@@ -91,8 +84,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setThemeCategory: (category) => set({ themeCategory: category }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setFocusMode: (on) => set({ focusMode: on }),
-  openCreateModal: () => set({ createModalOpen: true }),
-  closeCreateModal: () => set({ createModalOpen: false }),
   bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
   bumpFoldersRefresh: () => set((s) => ({ foldersRefreshTick: s.foldersRefreshTick + 1 })),
   bumpTagsRefresh: () => set((s) => ({ tagsRefreshTick: s.tagsRefreshTick + 1 })),

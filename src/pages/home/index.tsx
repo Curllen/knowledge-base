@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAppStore } from "@/store";
 import {
   Card,
   Input,
@@ -21,7 +20,6 @@ import {
   Calendar,
   Search,
   ArrowRight,
-  PenLine,
   Pin,
   Bot,
   GitBranch,
@@ -32,6 +30,8 @@ import { Tooltip as AntTooltip } from "antd";
 import { noteApi, dailyApi, systemApi, taskApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { NewNoteButton } from "@/components/NewNoteButton";
+import { createBlankAndOpen } from "@/lib/noteCreator";
 import type { Note, DashboardStats, DailyWritingStat, TaskStats } from "@/types";
 
 const { Text, Paragraph } = Typography;
@@ -202,15 +202,10 @@ export default function HomePage() {
       {/* 快捷操作 */}
       <Row gutter={12}>
         <Col span={8}>
-          <Button
-            type="primary"
-            icon={<PenLine size={15} />}
-            onClick={() => useAppStore.getState().openCreateModal()}
+          <NewNoteButton
             block
             style={{ borderRadius: 8, height: 40 }}
-          >
-            新建笔记
-          </Button>
+          />
         </Col>
         <Col span={8}>
           <Button
@@ -392,7 +387,7 @@ export default function HomePage() {
           <EmptyState
             description="还没有笔记"
             actionText="创建第一篇笔记"
-            onAction={() => useAppStore.getState().openCreateModal()}
+            onAction={() => createBlankAndOpen(null, navigate)}
           />
         )}
       </Card>

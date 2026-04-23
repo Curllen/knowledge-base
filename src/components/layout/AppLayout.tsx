@@ -16,7 +16,7 @@ import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { StarryBackground } from "@/components/ui/StarryBackground";
-import { CreateNoteModal } from "@/components/CreateNoteModal";
+import { createBlankAndOpen } from "@/lib/noteCreator";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
@@ -74,7 +74,6 @@ export function AppLayout() {
     setLightTheme, setDarkTheme,
     setThemeCategory,
     focusMode, setFocusMode,
-    createModalOpen, openCreateModal, closeCreateModal,
     alwaysOnTop, setAlwaysOnTop,
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
@@ -128,7 +127,7 @@ export function AppLayout() {
     const unlisteners: UnlistenFn[] = [];
 
     listen("tray:new-note", () => {
-      openCreateModal();
+      createBlankAndOpen(null, navigate);
     }).then((fn) => unlisteners.push(fn));
 
     listen("tray:open-daily", () => {
@@ -238,9 +237,9 @@ export function AppLayout() {
     // Ctrl/Cmd + N 新建笔记
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
-      openCreateModal();
+      createBlankAndOpen(null, navigate);
     }
-  }, [focusMode, setFocusMode, navigate, openCreateModal]);
+  }, [focusMode, setFocusMode, navigate]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleGlobalKeyDown);
@@ -349,7 +348,6 @@ export function AppLayout() {
         onOpenShortcuts={() => { setPaletteOpen(false); setShortcutsOpen(true); }}
       />
       <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <CreateNoteModal open={createModalOpen} onClose={closeCreateModal} />
       <UpdateModal open={modalOpen} onClose={closeModal} update={update} />
       <ExitConfirmListener />
     </Layout>
