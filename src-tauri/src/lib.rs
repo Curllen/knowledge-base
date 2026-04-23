@@ -98,6 +98,22 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("PDF 存储目录: {}", pdfs_dir.display());
 
+            // 绑定 PDFium 动态库（作为 pdf-extract 的 fallback，解决中文 CMap 问题）
+            // dll 通过 Tauri bundle.resources 随应用分发，位于 $RESOURCES/resources/pdfium/
+            match app.path().resolve(
+                "resources/pdfium/pdfium.dll",
+                tauri::path::BaseDirectory::Resource,
+            ) {
+                Ok(dll_path) => match services::pdf::init_pdfium(&dll_path) {
+                    Ok(()) => log::info!("PDFium 绑定成功: {}", dll_path.display()),
+                    Err(e) => log::warn!(
+                        "PDFium 绑定失败（fallback 不可用，将只能走 pdf-extract）: {}",
+                        e
+                    ),
+                },
+                Err(e) => log::warn!("PDFium 资源路径解析失败: {}", e),
+            }
+
             // 初始化通用源文件存储目录（Word 等用）
             let sources_dir = services::source_file::SourceFileService::ensure_dir(&data_dir)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
@@ -290,6 +306,7 @@ pub fn run() {
             commands::tasks::remove_task_link,
             commands::tasks::get_task_stats,
             commands::tasks::snooze_task_reminder,
+            commands::tasks::complete_task_occurrence,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

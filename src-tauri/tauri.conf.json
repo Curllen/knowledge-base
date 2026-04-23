@@ -52,7 +52,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": ["resources/pdfium/*"],
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],

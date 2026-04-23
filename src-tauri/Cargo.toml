@@ -41,6 +41,9 @@ pulldown-cmark = "0.13.1"
 html2md = "0.2"
 base64 = "0.22.1"
 pdf-extract = "0.9"
+# PDFium fallback（Chrome 同款 PDF 引擎）：pdf-extract 对中文 CMap（GBK-EUC-H 等）不支持，
+# 运行时动态加载 src-tauri/resources/pdfium/pdfium.dll 作为兜底
+pdfium-render = "0.8"
 # ─── 同步功能 ────────────────────────────────────
 zip = "2.2"
 sha2 = "0.10"
