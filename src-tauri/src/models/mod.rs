@@ -231,6 +231,9 @@ pub struct DashboardStats {
 pub struct ScannedFile {
     /// 文件绝对路径
     pub path: String,
+    /// 相对扫描根的父目录，斜杠统一为 '/'；根层文件为空串
+    /// 示例：扫描 "D:/foo/11"，文件 "D:/foo/11/子A/note.md" → "子A"
+    pub relative_dir: String,
     /// 文件名（不含扩展名）
     pub name: String,
     /// 文件大小（字节）

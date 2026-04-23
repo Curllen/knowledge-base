@@ -205,6 +205,8 @@ export interface AiMessage {
 /** 扫描到的文件条目 */
 export interface ScannedFile {
   path: string;
+  /** 相对扫描根的父目录，斜杠统一；根层文件为空串 */
+  relative_dir: string;
   name: string;
   size: number;
 }

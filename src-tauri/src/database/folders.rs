@@ -42,6 +42,35 @@ impl Database {
         })
     }
 
+    /// 按 (parent_id, name) 查找文件夹：用于导入时同名合并/复用，避免重复创建。
+    ///
+    /// 注意：SQLite 的 NULL 比较不走普通 `=`，所以根层（parent_id IS NULL）要单独分支。
+    pub fn find_folder_by_name(
+        &self,
+        parent_id: Option<i64>,
+        name: &str,
+    ) -> Result<Option<i64>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let result = match parent_id {
+            Some(pid) => conn
+                .query_row(
+                    "SELECT id FROM folders WHERE parent_id = ?1 AND name = ?2 LIMIT 1",
+                    params![pid, name],
+                    |row| row.get::<_, i64>(0),
+                )
+                .ok(),
+            None => conn
+                .query_row(
+                    "SELECT id FROM folders WHERE parent_id IS NULL AND name = ?1 LIMIT 1",
+                    params![name],
+                    |row| row.get::<_, i64>(0),
+                )
+                .ok(),
+        };
+        Ok(result)
+    }
+
     /// 重命名文件夹
     pub fn rename_folder(&self, id: i64, name: &str) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

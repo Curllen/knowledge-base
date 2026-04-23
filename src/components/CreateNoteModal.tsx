@@ -153,6 +153,8 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
       }
       onClose();
       useAppStore.getState().bumpNotesRefresh();
+      // 虽然单选入口一般不建新文件夹，但保险起见一并刷新（若将来扩展成目录导入）
+      useAppStore.getState().bumpFoldersRefresh();
       onCreated?.();
     } catch (e) {
       hide();

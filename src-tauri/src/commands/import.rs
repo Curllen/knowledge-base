@@ -11,17 +11,25 @@ pub fn scan_markdown_folder(path: String) -> Result<Vec<ScannedFile>, String> {
 }
 
 /// 按选定的文件路径列表导入 Markdown 文件
+///
+/// - `folder_id`: 导入到哪个文件夹下（None = 根）
+/// - `root_path`: 扫描根路径；传了才能按相对目录重建文件夹树
+/// - `preserve_root`: 是否在目标下多套一层"源根目录名"
 #[tauri::command]
 pub fn import_selected_files(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
     file_paths: Vec<String>,
     folder_id: Option<i64>,
+    root_path: Option<String>,
+    preserve_root: Option<bool>,
 ) -> Result<ImportResult, String> {
     services::import::ImportService::import_selected_files(
         &state.db,
         &file_paths,
         folder_id,
+        root_path.as_deref(),
+        preserve_root.unwrap_or(false),
         &app,
     )
     .map_err(|e| e.to_string())

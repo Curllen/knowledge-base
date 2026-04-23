@@ -152,6 +152,10 @@ export default function SettingsPage() {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
+  /** 扫描时用户选的根目录（后端用来按相对路径重建文件夹树） */
+  const [scanRootPath, setScanRootPath] = useState<string | null>(null);
+  /** 是否在目标下多套一层"源根目录名"作为导入批次根 */
+  const [preserveRoot, setPreserveRoot] = useState(true);
 
   // 导出状态
   const [exporting, setExporting] = useState(false);
@@ -482,6 +486,8 @@ export default function SettingsPage() {
       }
       setScannedFiles(files);
       setSelectedPaths(new Set(files.map((f) => f.path)));
+      setScanRootPath(selected as string);
+      setPreserveRoot(true);
       setScanModalOpen(true);
     } catch (e) {
       message.error(`扫描失败: ${e}`);
@@ -510,10 +516,18 @@ export default function SettingsPage() {
 
     try {
       const paths = Array.from(selectedPaths);
-      const result = await importApi.importSelected(paths, importFolderId ?? null);
+      const result = await importApi.importSelected(
+        paths,
+        importFolderId ?? null,
+        scanRootPath,
+        preserveRoot,
+      );
       setImportResult(result);
       if (result.imported > 0) {
         message.success(`成功导入 ${result.imported} 篇笔记`);
+        // 触发左侧笔记树 + 文件夹树刷新（导入过程会按层级新建文件夹）
+        useAppStore.getState().bumpNotesRefresh();
+        useAppStore.getState().bumpFoldersRefresh();
       }
     } catch (e) {
       message.error(`导入失败: ${e}`);
@@ -1254,6 +1268,23 @@ export default function SettingsPage() {
             已选 {selectedPaths.size} / {scannedFiles.length}
           </Text>
         </div>
+        {/* 保留目录层级选项 */}
+        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+          <Checkbox
+            checked={preserveRoot}
+            onChange={(e) => setPreserveRoot(e.target.checked)}
+          >
+            <span style={{ fontSize: 13 }}>保留源文件夹作为根</span>
+          </Checkbox>
+          <div className="mt-1" style={{ paddingLeft: 24 }}>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              导入时按源目录层级自动创建子文件夹，同名文件夹复用已有记录。
+              {preserveRoot
+                ? "将在目标下创建与源目录同名的根文件夹。"
+                : "子目录直接挂到目标位置。"}
+            </Text>
+          </div>
+        </div>
         <List
           size="small"
           dataSource={scannedFiles}
@@ -1268,6 +1299,17 @@ export default function SettingsPage() {
                 <Text ellipsis style={{ fontSize: 13 }}>
                   {file.name}.md
                 </Text>
+                {file.relative_dir && (
+                  <div>
+                    <Text
+                      type="secondary"
+                      ellipsis
+                      style={{ fontSize: 11, display: "block" }}
+                    >
+                      {file.relative_dir}
+                    </Text>
+                  </div>
+                )}
               </div>
               <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
                 {file.size < 1024

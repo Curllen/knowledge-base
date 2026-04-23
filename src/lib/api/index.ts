@@ -242,8 +242,23 @@ export const aiChatApi = {
 export const importApi = {
   scan: (path: string) =>
     invoke<ScannedFile[]>("scan_markdown_folder", { path }),
-  importSelected: (filePaths: string[], folderId?: number | null) =>
-    invoke<ImportResult>("import_selected_files", { filePaths, folderId }),
+  /**
+   * 导入选中的 md 文件。
+   * - `rootPath` / `preserveRoot` 来自"扫描文件夹"入口：传了后端会按相对目录重建文件夹树；
+   *   "单选 md 文件"入口无源根，不传即可（全部平铺到 folderId 下）
+   */
+  importSelected: (
+    filePaths: string[],
+    folderId?: number | null,
+    rootPath?: string | null,
+    preserveRoot?: boolean,
+  ) =>
+    invoke<ImportResult>("import_selected_files", {
+      filePaths,
+      folderId,
+      rootPath: rootPath ?? null,
+      preserveRoot: preserveRoot ?? false,
+    }),
   /** 打开单个 md 文件；返回 note id 与是否已同步 */
   openMarkdownFile: (filePath: string) =>
     invoke<OpenMarkdownResult>("open_markdown_file", { filePath }),
