@@ -75,6 +75,12 @@ body,
   padding-top: 6px;
 }
 
+/* antd Tree 每级缩进默认 24px，侧边栏多层嵌套时水平空间吃紧，
+   压到 12px 让 4~5 级嵌套仍能容纳在 220px 宽的 Sider 内 */
+.sidebar-folder-tree .ant-tree-indent-unit {
+  width: 12px;
+}
+
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
 .editor-page {

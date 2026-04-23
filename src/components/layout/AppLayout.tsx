@@ -66,6 +66,11 @@ function DragRegion() {
   );
 }
 
+const SIDEBAR_WIDTH_KEY = "sidebar-width";
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_DEFAULT_WIDTH = 220;
+
 export function AppLayout() {
   const {
     sidebarCollapsed, toggleSidebar,
@@ -78,6 +83,46 @@ export function AppLayout() {
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
+
+  // ─── 可拖拽调节侧边栏宽度 ───────────────────
+  // 持久化在 localStorage，避免为一处控件引入持久化中间件
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof localStorage === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= SIDEBAR_MIN_WIDTH && n <= SIDEBAR_MAX_WIDTH
+      ? n
+      : SIDEBAR_DEFAULT_WIDTH;
+  });
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  const startSidebarResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+      function onMove(ev: MouseEvent) {
+        const next = Math.max(
+          SIDEBAR_MIN_WIDTH,
+          Math.min(SIDEBAR_MAX_WIDTH, startW + (ev.clientX - startX)),
+        );
+        setSidebarWidth(next);
+      }
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+    },
+    [sidebarWidth],
+  );
   const navigate = useNavigate();
 
   // 双击 md 打开本应用 / 应用内"打开 md"按钮后的系统级落点：
@@ -253,7 +298,7 @@ export function AppLayout() {
         <Sider
           collapsed={sidebarCollapsed}
           collapsedWidth={60}
-          width={220}
+          width={sidebarWidth}
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
             // Mac 上 titleBarStyle: "Overlay" 使系统红黄绿按钮悬浮在窗口左上角，
@@ -263,6 +308,28 @@ export function AppLayout() {
         >
           <Sidebar />
         </Sider>
+      )}
+      {/* 可拖拽调节 Sider 宽度的手柄：绝对定位叠在 Sider 右边缘；折叠态下不显示 */}
+      {!focusMode && !sidebarCollapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整侧边栏宽度"
+          onMouseDown={startSidebarResize}
+          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+          title="拖动调整宽度（双击恢复默认）"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: sidebarWidth - 2,
+            width: 5,
+            height: "100%",
+            cursor: "col-resize",
+            zIndex: 50,
+            background: "transparent",
+          }}
+          className="hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
+        />
       )}
       <Layout>
         {!focusMode && (
