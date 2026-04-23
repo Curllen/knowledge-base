@@ -4,8 +4,8 @@
   "docsLocation": "sibling",
   "docsPath": "../knowledge-base-docs",
   "themeColor": "#7c3aed",
-  "lastSyncCommit": "eb4d17a",
-  "lastSyncTime": "2026-04-22T08:20:00Z",
+  "lastSyncCommit": "e749742",
+  "lastSyncTime": "2026-04-23T09:45:00Z",
   "coveredSections": ["guide", "features"],
   "updateHistory": [
     {
@@ -55,6 +55,21 @@
       ],
       "sourceChanges": [],
       "note": "修正残留的 v0.2.0 版本号示例 → v1.1.0：\n1. .vitepress/config.ts 结构化数据 softwareVersion 兜底值\n2. download.md 镜像表 R2 链接示例\n3. faq.md 三镜像对比表 R2 链接示例\n（保留各处「v0.2.0+」历史起始版本标记不变）"
+    },
+    {
+      "commit": "e749742",
+      "time": "2026-04-23T09:45:00Z",
+      "type": "incremental",
+      "affectedDocs": [
+        ".vitepress/config.ts"
+      ],
+      "sourceChanges": [
+        "LICENSE",
+        "COMMERCIAL-LICENSE.md",
+        "CONTRIBUTING.md",
+        ".github/CLA.md"
+      ],
+      "note": "源码仓 bkywksj/knowledge-base 于 2026-04-23 正式开源（AGPL-3.0 + 商业授权双许可），恢复文档站 navbar 右上角指向源码仓的 GitHub 图标（revert 13c2704）。主项目同步变更：添加 AGPL-3.0 LICENSE、COMMERCIAL-LICENSE.md 商业授权说明、CONTRIBUTING.md 贡献指南（含 CLA）、.github/CLA.md 完整协议、PR/Issue 模板、CLA Assistant 配置。"
     }
   ]
 }
