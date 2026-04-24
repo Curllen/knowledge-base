@@ -72,4 +72,28 @@ impl NoteService {
             page_size,
         })
     }
+
+    // ─── T-003 隐藏笔记 ────────────────────────────
+
+    /// 切换笔记"隐藏"状态
+    pub fn set_hidden(db: &Database, id: i64, hidden: bool) -> Result<bool, AppError> {
+        db.set_note_hidden(id, hidden)
+    }
+
+    /// 列出所有隐藏笔记（分页）
+    pub fn list_hidden(
+        db: &Database,
+        page: Option<usize>,
+        page_size: Option<usize>,
+    ) -> Result<PageResult<Note>, AppError> {
+        let page = page.unwrap_or(1).max(1);
+        let page_size = page_size.unwrap_or(20).clamp(1, 100);
+        let (items, total) = db.list_hidden_notes(page, page_size)?;
+        Ok(PageResult {
+            items,
+            total,
+            page,
+            page_size,
+        })
+    }
 }

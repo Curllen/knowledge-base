@@ -3,13 +3,14 @@ use std::path::Path;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{Note, PageResult};
+use crate::services::attachment::AttachmentService;
 use crate::services::image::ImageService;
 
 /// 回收站服务
 pub struct TrashService;
 
 impl TrashService {
-    /// 清理某笔记的所有关联文件（图片目录 + 源文件副本）
+    /// 清理某笔记的所有关联文件（图片目录 + 附件目录 + 源文件副本）
     /// 文件层失败仅 warn，不阻塞数据库删除流程
     fn cleanup_note_assets(data_dir: &Path, note_id: i64, source_file_path: &Option<String>) {
         // 1. 删图片目录 kb_assets/images/<id>/
@@ -17,7 +18,12 @@ impl TrashService {
             log::warn!("删除笔记 {} 图片目录失败: {}", note_id, e);
         }
 
-        // 2. 删源文件（可能是 sources/<id>.docx、pdfs/<id>.pdf 等）
+        // 2. 删附件目录 kb_assets/attachments/<id>/
+        if let Err(e) = AttachmentService::delete_note_attachments(data_dir, note_id) {
+            log::warn!("删除笔记 {} 附件目录失败: {}", note_id, e);
+        }
+
+        // 3. 删源文件（可能是 sources/<id>.docx、pdfs/<id>.pdf 等）
         if let Some(rel) = source_file_path {
             let abs = data_dir.join(rel);
             if abs.exists() {

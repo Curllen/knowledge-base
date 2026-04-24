@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod attachment;
 pub mod config;
 pub mod daily;
 pub mod folders;

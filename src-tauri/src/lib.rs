@@ -6,48 +6,243 @@ mod services;
 mod state;
 mod tray;
 
-use state::AppState;
-use tauri::{Manager, WindowEvent};
-#[cfg(not(debug_assertions))]
-use tauri::Emitter;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 
-/// 从命令行参数中提取 .md / .markdown 文件的绝对路径（取第一个）
-fn extract_md_path_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
-    for a in args {
-        if a.starts_with('-') {
-            continue;
+use state::AppState;
+use tauri::{Emitter, Manager, WindowEvent};
+
+/// 应用 identifier，必须与 tauri.conf.json 中的 identifier 一致
+/// 用于在 Tauri Builder 启动前估算 app_data_dir（提前判断锁、投递 md 等）
+const IDENTIFIER: &str = "com.agilefr.kb";
+/// .md 文件投递文件名（默认实例的轮询 watcher 监听此文件）
+const DELIVER_FILE: &str = "deliver-md.txt";
+
+// ───────── 多开实例支持 ─────────
+
+/// 从命令行参数中提取 .md / .markdown 文件路径
+fn extract_md_paths_from_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    args.into_iter()
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| {
+            let lo = a.to_lowercase();
+            lo.ends_with(".md") || lo.ends_with(".markdown")
+        })
+        .collect()
+}
+
+/// 解析命令行 `--instance N` 或 `--instance=N`
+fn parse_instance_arg() -> Option<u32> {
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if args[i] == "--instance" {
+            if let Some(val) = args.get(i + 1) {
+                return val.parse().ok();
+            }
         }
-        let lower = a.to_lowercase();
-        if lower.ends_with(".md") || lower.ends_with(".markdown") {
-            // 返回原始值（保留大小写），后续按绝对路径读
-            return Some(a);
+        if let Some(stripped) = args[i].strip_prefix("--instance=") {
+            return stripped.parse().ok();
         }
     }
     None
 }
 
+/// 在 Tauri Builder 启动前估算 app data 目录（用于早期投递判断）
+/// 必须与 Tauri 内部计算保持一致：基于 IDENTIFIER
+fn early_app_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(p) = std::env::var("APPDATA") {
+            return PathBuf::from(p).join(IDENTIFIER);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join("Library/Application Support")
+                .join(IDENTIFIER);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(p) = std::env::var("XDG_DATA_HOME") {
+            return PathBuf::from(p).join(IDENTIFIER);
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".local/share").join(IDENTIFIER);
+        }
+    }
+    std::env::temp_dir().join(IDENTIFIER)
+}
+
+/// 尝试以独占方式打开锁文件
+/// Windows: FILE_FLAG_DELETE_ON_CLOSE + share_mode(0)，进程退出时锁文件自动删除
+/// macOS: flock LOCK_EX | LOCK_NB
+/// 其他平台: create_new (简易方案)
+fn try_exclusive_lock(path: &Path) -> Result<File, ()> {
+    use std::fs::OpenOptions;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(0x04000000) // FILE_FLAG_DELETE_ON_CLOSE
+            .share_mode(0) // 独占，第二个进程打开会失败
+            .open(path)
+            .map_err(|_| ())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|_| ())?;
+        use std::os::fd::AsRawFd;
+        let ret = unsafe {
+            extern "C" {
+                fn flock(fd: i32, operation: i32) -> i32;
+            }
+            flock(file.as_raw_fd(), 2 /* LOCK_EX */ | 4 /* LOCK_NB */)
+        };
+        if ret == 0 {
+            Ok(file)
+        } else {
+            Err(())
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|_| ())
+    }
+}
+
+/// 自动分配实例锁
+/// - 显式 ID：直接锁该 ID
+/// - 自动模式：先试默认锁；占用则在 2..=99 中找空位
+fn acquire_instance_lock(
+    data_dir: &Path,
+    explicit_id: Option<u32>,
+    prefix: &str,
+) -> (Option<u32>, Option<File>) {
+    if let Some(id) = explicit_id {
+        let lock = data_dir.join(format!("{}instance-{}.lock", prefix, id));
+        let file = try_exclusive_lock(&lock).ok();
+        return (Some(id), file);
+    }
+    let default_lock = data_dir.join(format!("{}default.lock", prefix));
+    if let Ok(f) = try_exclusive_lock(&default_lock) {
+        return (None, Some(f));
+    }
+    for id in 2..=99u32 {
+        let lock = data_dir.join(format!("{}instance-{}.lock", prefix, id));
+        if let Ok(f) = try_exclusive_lock(&lock) {
+            return (Some(id), Some(f));
+        }
+    }
+    (Some(100), None)
+}
+
+/// 探测默认实例锁是否被占（不持有结果）
+/// 试拿一次锁，立即 drop（在 Windows 上由于 FILE_FLAG_DELETE_ON_CLOSE，
+/// 若拿到了锁文件会被自动删除，但此时本来就没有占用者，无副作用）
+fn is_default_lock_busy(lock_path: &Path) -> bool {
+    try_exclusive_lock(lock_path).is_err()
+}
+
+/// 把 .md 路径写入投递文件，给已运行的默认实例读取
+fn deliver_md_to_default(app_data_dir: &Path, md_paths: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = app_data_dir.join(DELIVER_FILE);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    for p in md_paths {
+        writeln!(f, "{}", p)?;
+    }
+    Ok(())
+}
+
+/// 默认实例的 .md 投递监听线程：轮询 deliver 文件 mtime，
+/// 检测到变化即读取所有路径并 emit `open-md-file` 事件给前端
+fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
+    tauri::async_runtime::spawn(async move {
+        let path = app_data_dir.join(DELIVER_FILE);
+        // 启动时清空，避免上次残留被误处理
+        let _ = std::fs::write(&path, "");
+        let mut last_mtime = std::time::SystemTime::UNIX_EPOCH;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            let Ok(mtime) = meta.modified() else { continue };
+            if mtime <= last_mtime {
+                continue;
+            }
+            last_mtime = mtime;
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if content.trim().is_empty() {
+                continue;
+            }
+            // 清空（这次写入会更新 mtime，下轮跳过）
+            let _ = std::fs::write(&path, "");
+            last_mtime = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .unwrap_or(last_mtime);
+            for line in content.lines() {
+                let p = line.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                log::info!("[deliver] 收到 md: {}", p);
+                let _ = handle.emit("open-md-file", p.to_string());
+            }
+            if let Some(win) = handle.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let lock_prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+    let explicit_id = parse_instance_arg();
 
-    // ─── 单实例插件：仅生产模式启用 ─────────────────────
-    // dev 模式跳过，方便开发版与已安装的正式版同时打开（两套数据通过 `dev-` 前缀隔离）。
-    // 否则 tauri-plugin-single-instance 按 identifier 锁定，dev/prod 共用 `com.agilefr.kb`
-    // 会导致后启动的一方被视为"第二实例"直接退出。
-    #[cfg(not(debug_assertions))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-        // 聚焦主窗口
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+    // 早期路径：默认实例已运行 + argv 里有 .md → 投递并退出
+    // 这样双击 .md 时，已存在的默认实例接管打开（符合直觉），不会盲目开新实例
+    if explicit_id.is_none() {
+        let app_data_dir = early_app_data_dir();
+        let _ = std::fs::create_dir_all(&app_data_dir);
+        let default_lock = app_data_dir.join(format!("{}default.lock", lock_prefix));
+        if is_default_lock_busy(&default_lock) {
+            let md_paths = extract_md_paths_from_args(std::env::args().skip(1));
+            if !md_paths.is_empty() {
+                let _ = deliver_md_to_default(&app_data_dir, &md_paths);
+                return; // 直接退出，不进 Tauri Builder
+            }
+            // 没 .md 就继续启动，下面 acquire_instance_lock 会自动分配 instance-2/3...
         }
-        // 解析新 argv 里的 md 路径并广播给前端
-        if let Some(md_path) = extract_md_path_from_args(argv.into_iter().skip(1)) {
-            log::info!("[single-instance] 新实例传入 md: {}", md_path);
-            let _ = app.emit("open-md-file", md_path);
-        }
-    }));
+    }
+
+    let builder = tauri::Builder::default();
 
     builder
         // ─── 插件注册 ───────────────────────────────
@@ -68,38 +263,53 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         // ─── 应用初始化 ─────────────────────────────
-        .setup(|app| {
-            // 初始化数据库（存放在应用数据目录）
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
+        .setup(move |app| {
+            let data_dir_root = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir_root)?;
 
-            // 开发/生产数据隔离：dev 模式下所有数据加 dev- 前缀，避免改坏生产数据
-            // 首次启动 dev 时若检测到旧无前缀数据，自动迁移
-            if cfg!(debug_assertions) {
-                migrate_to_dev_prefix(&data_dir);
+            // dev 模式旧数据迁移：仅默认实例需要（多开实例自带独立子目录）
+            if cfg!(debug_assertions) && explicit_id.is_none() {
+                migrate_to_dev_prefix(&data_dir_root);
             }
 
+            // 拿锁（这次真持有，存活到进程结束）
+            let (instance_id, lock_file) =
+                acquire_instance_lock(&data_dir_root, explicit_id, lock_prefix);
+            match instance_id {
+                None => log::info!("默认实例模式"),
+                Some(n) => log::info!("多开实例模式: instance-{}", n),
+            }
+
+            // 实例数据目录：默认实例 = data_dir_root（兼容老用户）
+            //               多开实例 = data_dir_root/{prefix}instance-N
+            let instance_dir = match instance_id {
+                None => data_dir_root.clone(),
+                Some(n) => data_dir_root.join(format!("{}instance-{}", lock_prefix, n)),
+            };
+            std::fs::create_dir_all(&instance_dir)?;
+
             let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
-            let db_path = data_dir.join(format!("{}app.db", prefix));
+            let db_path = instance_dir.join(format!("{}app.db", prefix));
             let db_path_str = db_path.to_string_lossy().to_string();
 
             let db = database::Database::init(&db_path_str)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-
             log::info!("数据库初始化完成: {}", db_path_str);
 
-            // 初始化图片存储目录（image service 内部会自动加 dev- 前缀）
-            let images_dir = services::image::ImageService::ensure_dir(&data_dir)
+            // 资产目录均基于 instance_dir（service 内部仍叫 app_data_dir，语义是"实例数据根"）
+            let images_dir = services::image::ImageService::ensure_dir(&instance_dir)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("图片存储目录: {}", images_dir.display());
 
-            // 初始化 PDF 存储目录（同样带 dev- 前缀）
-            let pdfs_dir = services::pdf::PdfService::ensure_dir(&data_dir)
+            let attachments_dir = services::attachment::AttachmentService::ensure_dir(&instance_dir)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            log::info!("附件存储目录: {}", attachments_dir.display());
+
+            let pdfs_dir = services::pdf::PdfService::ensure_dir(&instance_dir)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("PDF 存储目录: {}", pdfs_dir.display());
 
-            // 绑定 PDFium 动态库（作为 pdf-extract 的 fallback，解决中文 CMap 问题）
-            // dll 通过 Tauri bundle.resources 随应用分发，位于 $RESOURCES/resources/pdfium/
+            // 绑定 PDFium 动态库（资源目录与实例无关）
             match app.path().resolve(
                 "resources/pdfium/pdfium.dll",
                 tauri::path::BaseDirectory::Resource,
@@ -114,18 +324,18 @@ pub fn run() {
                 Err(e) => log::warn!("PDFium 资源路径解析失败: {}", e),
             }
 
-            // 初始化通用源文件存储目录（Word 等用）
-            let sources_dir = services::source_file::SourceFileService::ensure_dir(&data_dir)
+            let sources_dir = services::source_file::SourceFileService::ensure_dir(&instance_dir)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("源文件存储目录: {}", sources_dir.display());
 
-            // 注册全局状态（data_dir 用于服务层清理资产文件）
-            let state = AppState::new(db, data_dir.clone());
+            // 注册全局状态
+            let state = AppState::new(db, instance_dir.clone(), instance_id, lock_file);
 
-            // 若应用是由"双击 md 文件"启动的，暂存路径到 state，
+            // 若由"双击 md 文件"启动，暂存路径到 state，
             // 等前端 mount 完成后通过 take_pending_open_md_path 取走并打开
-            if let Some(md_path) =
-                extract_md_path_from_args(std::env::args().skip(1))
+            if let Some(md_path) = extract_md_paths_from_args(std::env::args().skip(1))
+                .into_iter()
+                .next()
             {
                 log::info!("[launch] 启动参数带入 md: {}", md_path);
                 if let Ok(mut guard) = state.pending_open_md_path.lock() {
@@ -135,19 +345,30 @@ pub fn run() {
 
             app.manage(state);
 
-            // 开发模式下在窗口标题追加 [DEV] 标识，避免和生产窗口混淆
-            if cfg!(debug_assertions) {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_title("知识库 [DEV]");
+            // 窗口标题区分实例（DEV/PROD × 默认/实例N 四态）
+            if let Some(window) = app.get_webview_window("main") {
+                let title = match (cfg!(debug_assertions), instance_id) {
+                    (true, None) => Some("知识库 [DEV]".to_string()),
+                    (true, Some(n)) => Some(format!("知识库 [DEV 实例 {}]", n)),
+                    (false, None) => None,
+                    (false, Some(n)) => Some(format!("知识库 [实例 {}]", n)),
+                };
+                if let Some(t) = title {
+                    let _ = window.set_title(&t);
                 }
             }
 
-            // 初始化系统托盘
-            tray::setup_tray(app)?;
+            // 默认实例：启动 .md 投递监听，接管其他实例转来的双击打开请求
+            if instance_id.is_none() {
+                start_md_deliver_watcher(app.handle().clone(), data_dir_root.clone());
+            }
+
+            // 系统托盘（携带实例号供 tooltip 区分）
+            tray::setup_tray(app, instance_id)?;
             log::info!("系统托盘初始化完成");
 
             // 开机启动时若带 --start-minimized 参数 且 用户在设置里开启了"启动最小化到托盘"，
-            // 则隐藏主窗口到托盘。手动双击图标启动（无 --start-minimized）则正常显示。
+            // 则隐藏主窗口到托盘
             if std::env::args().any(|a| a == "--start-minimized") {
                 let start_minimized = app
                     .state::<AppState>()
@@ -165,13 +386,15 @@ pub fn run() {
                 }
             }
 
-            // 启动自动同步调度器（后台 tokio 任务，按配置周期触发 WebDAV push）
-            let app_handle_sched = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                services::sync_scheduler::run_scheduler(app_handle_sched).await;
-            });
+            // 自动同步调度器：仅默认实例启动，避免多实例并发推送 WebDAV 互相覆盖
+            if instance_id.is_none() {
+                let app_handle_sched = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    services::sync_scheduler::run_scheduler(app_handle_sched).await;
+                });
+            }
 
-            // 启动待办定时提醒调度器（每分钟扫一次到点任务）
+            // 待办定时提醒：每个实例独立（操作各自实例 db）
             let app_handle_reminder = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 services::task_reminder::run_reminder_loop(app_handle_reminder).await;
@@ -199,6 +422,8 @@ pub fn run() {
             commands::notes::list_notes,
             commands::notes::toggle_pin,
             commands::notes::move_note_to_folder,
+            commands::notes::set_note_hidden,
+            commands::notes::list_hidden_notes,
             // 文件夹模块
             commands::folders::create_folder,
             commands::folders::rename_folder,
@@ -275,6 +500,10 @@ pub fn run() {
             commands::image::get_images_dir,
             commands::image::scan_orphan_images,
             commands::image::clean_orphan_images,
+            // 附件模块（PDF/Office/ZIP/音视频等通用文件）
+            commands::attachment::save_note_attachment,
+            commands::attachment::delete_note_attachments,
+            commands::attachment::get_attachments_dir,
             // 模板模块
             commands::template::list_templates,
             commands::template::get_template,
@@ -346,7 +575,12 @@ fn migrate_to_dev_prefix(data_dir: &std::path::Path) {
         if old_p.exists() && !new_p.exists() {
             match std::fs::rename(&old_p, &new_p) {
                 Ok(_) => log::info!("[dev 迁移] {} → {}", old_p.display(), new_p.display()),
-                Err(e) => log::warn!("[dev 迁移失败] {} → {}: {}", old_p.display(), new_p.display(), e),
+                Err(e) => log::warn!(
+                    "[dev 迁移失败] {} → {}: {}",
+                    old_p.display(),
+                    new_p.display(),
+                    e
+                ),
             }
         }
     }

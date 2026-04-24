@@ -6,16 +6,24 @@ use walkdir::WalkDir;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{ImportProgress, ImportResult, NoteInput, OpenMarkdownResult, ScannedFile};
+use crate::models::{
+    ImportConflictPolicy, ImportProgress, ImportResult, NoteInput, OpenMarkdownResult,
+    ScannedFile,
+};
+use crate::services::hash::sha256_hex;
 
 pub struct ImportService;
 
 impl ImportService {
     /// 扫描文件夹，返回所有 Markdown 文件列表（不导入）
     ///
-    /// 每条返回 `relative_dir`——相对扫描根的父目录（斜杠统一 '/'，根层为空串），
-    /// 供导入阶段按需重建文件夹树使用。
-    pub fn scan_markdown_folder(folder_path: &str) -> Result<Vec<ScannedFile>, AppError> {
+    /// 每条带 `relative_dir`（相对扫描根的父目录，斜杠统一 '/'，根层为空串），
+    /// 以及 `match_kind` + `existing_note_id` —— 扫描阶段就告诉前端哪些文件
+    /// 已导入过（path 主判 / title+content_hash 兜底），便于弹窗展示分桶统计。
+    pub fn scan_markdown_folder(
+        db: &Database,
+        folder_path: &str,
+    ) -> Result<Vec<ScannedFile>, AppError> {
         let root = Path::new(folder_path);
         if !root.is_dir() {
             return Err(AppError::InvalidInput(format!(
@@ -63,11 +71,24 @@ impl ImportService {
                     })
                     .unwrap_or_default();
 
+                // 扫描阶段就做去重判定 —— 前端预览需要
+                let (match_kind, existing_id) =
+                    detect_existing_match(db, path, &name).unwrap_or_else(|e| {
+                        log::warn!(
+                            "[scan] 检测重复失败（当成 new 处理）: {} -> {}",
+                            path.display(),
+                            e
+                        );
+                        ("new".to_string(), None)
+                    });
+
                 Some(ScannedFile {
                     path: path.to_string_lossy().to_string(),
                     relative_dir,
                     name,
                     size,
+                    match_kind,
+                    existing_note_id: existing_id,
                 })
             })
             .collect();
@@ -87,19 +108,23 @@ impl ImportService {
     /// - `base_folder_id`: 导入到哪个文件夹下。None = 根
     /// - `root_path`: 扫描的根路径。传了才能按相对路径重建目录树；不传则全部平铺到 base
     /// - `preserve_root`: 是否在 base 下多套一层"源文件夹名"。需要 root_path 存在
+    /// - `policy`: 已存在的文件怎么办（Skip / Duplicate）
     ///
     /// 同名文件夹按 (parent_id, name) 复用已有记录，避免重复创建。
+    /// 每条成功导入的笔记都会写入 canonical `source_file_path`，方便下次导入时去重。
     pub fn import_selected_files<R: Runtime, E: Emitter<R>>(
         db: &Database,
         file_paths: &[String],
         base_folder_id: Option<i64>,
         root_path: Option<&str>,
         preserve_root: bool,
+        policy: ImportConflictPolicy,
         emitter: &E,
     ) -> Result<ImportResult, AppError> {
         let total = file_paths.len();
         let mut imported = 0usize;
         let mut skipped = 0usize;
+        let mut duplicated = 0usize;
         let mut errors = Vec::new();
 
         // 预先算好根扫描路径（用于对每个文件算相对目录）+ 预先建"保留根"文件夹
@@ -165,6 +190,33 @@ impl ImportService {
                 continue;
             }
 
+            // ─── 去重判定（与 scan 阶段用同一套逻辑，避免扫描后文件被改动造成不一致）
+            let canonical_path = canonicalize_path(file_path);
+            let title = extract_title(&content).unwrap_or_else(|| file_name.clone());
+            let (match_kind, _existing_id) =
+                match detect_existing_match_with_content(db, &canonical_path, &title, &content) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        errors.push(format!("{}: 去重检测失败 - {}", file_name, e));
+                        continue;
+                    }
+                };
+
+            // 冲突策略分支
+            let final_title = match (match_kind.as_str(), policy) {
+                ("new", _) => title,
+                (_, ImportConflictPolicy::Skip) => {
+                    skipped += 1;
+                    continue;
+                }
+                (_, ImportConflictPolicy::Duplicate) => {
+                    // 副本直接加 " (2)" 后缀。重复多次导入会累积为 (2) (2)...
+                    // 不查 DB 严格唯一化 —— 用户选副本就是明确要一条独立记录，不追求唯一命名
+                    duplicated += 1;
+                    format!("{} (2)", title)
+                }
+            };
+
             // ─── 定位这条笔记要挂的文件夹 ───
             let target_folder_id = match root_canonical.as_ref() {
                 Some(root_c) => {
@@ -180,22 +232,29 @@ impl ImportService {
                 None => batch_root_id,
             };
 
-            // 提取标题：优先用第一个 # 标题行，否则用文件名
-            let title = extract_title(&content).unwrap_or(file_name);
-
             let input = NoteInput {
-                title,
+                title: final_title.clone(),
                 content,
                 folder_id: target_folder_id,
             };
 
             match db.create_note(&input) {
                 Ok(note) => {
-                    let _ = db.set_note_source_file(note.id, None, Some("md"));
-                    imported += 1;
+                    // 写入 canonical path，下次导入同一文件即可按 path 去重命中
+                    // 注意：Duplicate 策略新建的副本也挂 canonical_path —— 这样下次
+                    // 再导入同文件仍会命中 path，按用户当时选的策略处理，不会无限新建
+                    let _ = db.set_note_source_file(
+                        note.id,
+                        Some(&canonical_path),
+                        Some("md"),
+                    );
+                    if match_kind == "new" {
+                        imported += 1;
+                    }
+                    // duplicate 计数已在上面分支累计，不重复加
                 }
                 Err(e) => {
-                    errors.push(format!("{}: 导入失败 - {}", input.title, e));
+                    errors.push(format!("{}: 导入失败 - {}", final_title, e));
                 }
             }
         }
@@ -203,6 +262,7 @@ impl ImportService {
         let result = ImportResult {
             imported,
             skipped,
+            duplicated,
             errors,
         };
 
@@ -362,4 +422,58 @@ fn extract_title(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 文件路径规范化字符串（大小写+斜杠统一），用于与 DB source_file_path 精确比对
+fn canonicalize_path(file_path: &Path) -> String {
+    std::fs::canonicalize(file_path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned())
+}
+
+/// 扫描阶段的去重判定：先读文件内容算 hash，再按 (path) / (title, hash) 查 DB
+///
+/// 扫描大目录时每个文件都要读一遍；几 KB MD 文件 SHA-256 是毫秒级，可接受。
+/// 大文件或海量文件场景再考虑跳过 hash 走仅 path 匹配。
+fn detect_existing_match(
+    db: &Database,
+    file_path: &Path,
+    file_stem: &str,
+) -> Result<(String, Option<i64>), AppError> {
+    let canonical = canonicalize_path(file_path);
+
+    // 先按 path 匹配（最精确，不用读文件）
+    if let Some((id, _)) = db.find_active_note_by_source_path(&canonical)? {
+        return Ok(("path".to_string(), Some(id)));
+    }
+
+    // 按 title + content_hash 兜底
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(("new".to_string(), None)),
+    };
+    let title = extract_title(&content).unwrap_or_else(|| file_stem.to_string());
+    let hash = sha256_hex(&content);
+    if let Some(id) = db.find_active_note_by_title_and_hash(&title, &hash)? {
+        return Ok(("fuzzy".to_string(), Some(id)));
+    }
+
+    Ok(("new".to_string(), None))
+}
+
+/// import 阶段的去重判定：content 已读入内存，避免再读文件
+fn detect_existing_match_with_content(
+    db: &Database,
+    canonical_path: &str,
+    title: &str,
+    content: &str,
+) -> Result<(String, Option<i64>), AppError> {
+    if let Some((id, _)) = db.find_active_note_by_source_path(canonical_path)? {
+        return Ok(("path".to_string(), Some(id)));
+    }
+    let hash = sha256_hex(content);
+    if let Some(id) = db.find_active_note_by_title_and_hash(title, &hash)? {
+        return Ok(("fuzzy".to_string(), Some(id)));
+    }
+    Ok(("new".to_string(), None))
 }

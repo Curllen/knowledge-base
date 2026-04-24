@@ -22,10 +22,12 @@ import type {
   AiModelInput,
   AiConversation,
   AiMessage,
+  ImportConflictPolicy,
   ImportResult,
   OpenMarkdownResult,
   OrphanImageScan,
   OrphanImageClean,
+  AttachmentInfo,
   ScannedFile,
   ExportResult,
   NoteTemplate,
@@ -136,6 +138,15 @@ export const noteApi = {
   togglePin: (id: number) => invoke<boolean>("toggle_pin", { id }),
   moveToFolder: (noteId: number, folderId?: number | null) =>
     invoke<void>("move_note_to_folder", { noteId, folderId }),
+  /** T-003: 切换"隐藏"状态；返回切换后的新状态 */
+  setHidden: (id: number, hidden: boolean) =>
+    invoke<boolean>("set_note_hidden", { id, hidden }),
+};
+
+/** T-003 隐藏笔记专用 API（/hidden 页面） */
+export const hiddenApi = {
+  list: (page?: number, pageSize?: number) =>
+    invoke<PageResult<Note>>("list_hidden_notes", { page, pageSize }),
 };
 
 /** 文件夹 API */
@@ -263,24 +274,33 @@ export const aiChatApi = {
 
 /** 导入 API */
 export const importApi = {
+  /**
+   * 扫描文件夹，返回每个 .md 文件的分桶结果（new / path / fuzzy）。
+   * 前端据此展示"全新/已导入过/可能重复"预览弹窗。
+   */
   scan: (path: string) =>
     invoke<ScannedFile[]>("scan_markdown_folder", { path }),
   /**
    * 导入选中的 md 文件。
    * - `rootPath` / `preserveRoot` 来自"扫描文件夹"入口：传了后端会按相对目录重建文件夹树；
    *   "单选 md 文件"入口无源根，不传即可（全部平铺到 folderId 下）
+   * - `policy` 控制遇到已存在文件的处理：
+   *   · "skip"（默认）已存在则跳过
+   *   · "duplicate" 标题加 " (2)" 新建副本
    */
   importSelected: (
     filePaths: string[],
     folderId?: number | null,
     rootPath?: string | null,
     preserveRoot?: boolean,
+    policy?: ImportConflictPolicy,
   ) =>
     invoke<ImportResult>("import_selected_files", {
       filePaths,
       folderId,
       rootPath: rootPath ?? null,
       preserveRoot: preserveRoot ?? false,
+      policy: policy ?? "skip",
     }),
   /** 打开单个 md 文件；返回 note id 与是否已同步 */
   openMarkdownFile: (filePath: string) =>
@@ -302,6 +322,18 @@ export const exportApi = {
   /** 导出单篇笔记为 Markdown 文件 */
   exportSingle: (id: number, filePath: string) =>
     invoke<void>("export_single_note", { id, filePath }),
+};
+
+/** 附件 API（PDF/Office/ZIP/音视频等非图片非文本文件） */
+export const attachmentApi = {
+  /** 保存附件（base64 数据）；返回含绝对路径的 AttachmentInfo */
+  save: (noteId: number, fileName: string, base64Data: string) =>
+    invoke<AttachmentInfo>("save_note_attachment", { noteId, fileName, base64Data }),
+  /** 删除笔记的所有附件 */
+  deleteNoteAttachments: (noteId: number) =>
+    invoke<void>("delete_note_attachments", { noteId }),
+  /** 获取附件存储目录（设置页"打开目录"入口） */
+  getAttachmentsDir: () => invoke<string>("get_attachments_dir"),
 };
 
 /** 图片 API */

@@ -30,6 +30,8 @@ pub struct Note {
     pub is_daily: bool,
     pub daily_date: Option<String>,
     pub is_pinned: bool,
+    /// T-003: 是否"隐藏"。默认视图全部过滤；wiki link 跳转仍可打开
+    pub is_hidden: bool,
     pub word_count: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -232,6 +234,9 @@ pub struct DashboardStats {
 // ─── 导入 ─────────────────────────────────────
 
 /// 扫描到的文件条目（供前端预览勾选）
+///
+/// match_kind + existing_note_id 在扫描阶段就告诉前端"该文件是否已经导入过"，
+/// 用户可据此选择冲突策略（跳过/副本）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ScannedFile {
     /// 文件绝对路径
@@ -243,13 +248,43 @@ pub struct ScannedFile {
     pub name: String,
     /// 文件大小（字节）
     pub size: u64,
+    /// 去重匹配结果：
+    /// - "new"   全新文件，未找到任何已有笔记
+    /// - "path"  按 canonical source_file_path 命中（最精确）
+    /// - "fuzzy" 按 (title, content_hash) 兜底命中（用户可能搬动过源文件）
+    pub match_kind: String,
+    /// match_kind 非 "new" 时，指向已存在笔记的 id
+    pub existing_note_id: Option<i64>,
+}
+
+/// 导入冲突策略：遇到已存在的文件怎么处理
+///
+/// 仅在 `import_selected_files` 批量导入场景生效；
+/// 单文件 `open_markdown_file` 另有同步回写语义，不走这里。
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportConflictPolicy {
+    /// 跳过（默认，最安全）：扫描标记为 path/fuzzy 的文件不重新创建笔记
+    Skip,
+    /// 创建副本：标题加 " (2)" 后缀新建独立笔记，原笔记保持不变
+    Duplicate,
+}
+
+impl Default for ImportConflictPolicy {
+    fn default() -> Self {
+        Self::Skip
+    }
 }
 
 /// 导入结果
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ImportResult {
+    /// 新建的笔记数
     pub imported: usize,
+    /// 跳过的数量（空文件 / 去重时按 Skip 策略跳过）
     pub skipped: usize,
+    /// 按 Duplicate 策略新建的副本数
+    pub duplicated: usize,
     pub errors: Vec<String>,
 }
 
@@ -268,6 +303,22 @@ pub struct OpenMarkdownResult {
     pub note_id: i64,
     /// true = 检测到源文件内容有变化，已覆盖回笔记（前端可据此提示）
     pub was_synced: bool,
+}
+
+// ─── 附件 ─────────────────────────────────────
+
+/// 附件信息（保存后回传给前端，用于插入 Tiptap 链接）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInfo {
+    /// 绝对路径（前端用来构造 file:// 链接给 opener 打开）
+    pub path: String,
+    /// 原始文件名（用户能看懂的文本，显示在链接里）
+    pub file_name: String,
+    /// 字节数（用于显示 "1.2 MB"）
+    pub size: u64,
+    /// MIME 类型（按扩展名映射；未知为 application/octet-stream）
+    pub mime: String,
 }
 
 /// 孤儿图片扫描结果（只扫不删）

@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 20;
+pub const SCHEMA_VERSION: i32 = 22;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -50,6 +50,8 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             17 => migrate_v17_to_v18(conn)?,
             18 => migrate_v18_to_v19(conn)?,
             19 => migrate_v19_to_v20(conn)?,
+            20 => migrate_v20_to_v21(conn)?,
+            21 => migrate_v21_to_v22(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -814,5 +816,82 @@ fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 20)?;
+    Ok(())
+}
+
+/// v20 -> v21: notes 新增 is_hidden 字段（T-003 笔记"隐藏"标记）
+///
+/// 语义是"弱隐藏"：默认视图（笔记列表 / 搜索 / 反链 / 图谱 / RAG）完全看不见；
+/// 但 wiki link [[...]] 点击跳转仍允许打开，保证链接不失效。
+///
+/// 这不是加密——数据库文件打开还是能看到内容。加密放 T-007。
+///
+/// 部分索引只建在"活跃笔记"上（is_deleted=0），避免回收站的 hidden 条目
+/// 干扰热路径查询。
+fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v20 -> v21 (notes.is_hidden)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "is_hidden") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;")?;
+    }
+
+    // is_hidden 出现在 WHERE 条件里很频繁（所有主路径查询都加 is_hidden=0），
+    // 建部分索引帮助过滤；索引只覆盖"活跃"笔记，和现有 idx_notes_pinned 的思路一致
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_hidden
+         ON notes(is_hidden, updated_at DESC) WHERE is_deleted = 0;",
+    )?;
+
+    set_version(conn, 21)?;
+    Ok(())
+}
+
+/// v21 -> v22: notes 新增 content_hash 字段 + 索引 + 存量回填
+///
+/// 背景：导入 Markdown 文件夹时，原实现不做去重，同一批文件反复导入会产生重复笔记。
+/// 本迁移把"内容指纹"持久化到 notes.content_hash（SHA-256 十六进制串），
+/// 后续扫描外部 md 时按 (title, content_hash) 做兜底匹配（source_file_path 为主判）。
+///
+/// DAO 协议：`create_note` / `update_note` / `update_note_content` / `get_or_create_daily`
+/// 写入正文时必须同步维护 content_hash。存量笔记由本迁移一次性回填。
+///
+/// 部分索引只覆盖活跃笔记（is_deleted=0），和 idx_notes_pinned / idx_notes_hidden 的思路一致。
+fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v21 -> v22 (notes.content_hash)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "content_hash") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN content_hash TEXT;")?;
+    }
+
+    // 回填：仅对 content_hash IS NULL 的行（幂等可重跑）
+    let mut stmt = conn
+        .prepare("SELECT id, content FROM notes WHERE content_hash IS NULL")?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    log::info!("[v22] 准备回填 {} 条笔记的 content_hash", rows.len());
+
+    let tx = conn.unchecked_transaction()?;
+    for (id, content) in &rows {
+        let hash = crate::services::hash::sha256_hex(content);
+        tx.execute(
+            "UPDATE notes SET content_hash = ?1 WHERE id = ?2",
+            rusqlite::params![hash, id],
+        )?;
+    }
+    tx.commit()?;
+
+    // 部分索引：只对活跃笔记建索引
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_content_hash
+         ON notes(content_hash) WHERE is_deleted = 0;",
+    )?;
+
+    set_version(conn, 22)?;
     Ok(())
 }

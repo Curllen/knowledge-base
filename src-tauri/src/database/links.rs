@@ -107,11 +107,13 @@ impl super::Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
+        // T-003: 反向链接也过滤隐藏源笔记——不想在"普通笔记"的反链面板里泄露
+        // "哪些隐藏笔记引用了你"。跳转 [[...]] 本身不受影响（走 find_note_id_by_title_loose）。
         let mut stmt = conn.prepare(
             "SELECT nl.source_id, n.title, nl.context, n.updated_at
              FROM note_links nl
              JOIN notes n ON n.id = nl.source_id
-             WHERE nl.target_id = ?1 AND n.is_deleted = 0
+             WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
              ORDER BY n.updated_at DESC",
         )?;
         let links = stmt
@@ -163,8 +165,10 @@ impl super::Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let pattern = format!("%{}%", keyword);
+        // T-003: wiki link 候选下拉不暴露隐藏笔记标题（弱保护）；
+        // 用户已经写好的 [[隐藏笔记]] 跳转仍可用（走 find_note_id_by_title_loose，那里不过滤）。
         let mut stmt = conn.prepare(
-            "SELECT id, title FROM notes WHERE title LIKE ?1 AND is_deleted = 0 ORDER BY updated_at DESC LIMIT ?2",
+            "SELECT id, title FROM notes WHERE title LIKE ?1 AND is_deleted = 0 AND is_hidden = 0 ORDER BY updated_at DESC LIMIT ?2",
         )?;
         let results = stmt
             .query_map(rusqlite::params![pattern, limit as i64], |row| {
@@ -199,12 +203,14 @@ impl super::Database {
 
         // 用 LEFT JOIN + GROUP BY 一次性拿到 tag_count，替代原来每行一条相关子查询（N+1）。
         // 对于 10k+ 笔记、平均 3 标签的情况，扫描量从 10k * 10k → 10k + 30k，快十数倍。
+        // T-003: 过滤隐藏笔记。节点不返回后，下面扫 wiki 建边时 title_to_id 里也没这些笔记，
+        // 对隐藏笔记的 [[wiki link]] 自动成为"断边"，图里既无节点也无指向它的边，达到隐身效果。
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title, n.content, n.is_daily, n.is_pinned,
                     COUNT(nt.tag_id) AS tag_count
              FROM notes n
              LEFT JOIN note_tags nt ON nt.note_id = n.id
-             WHERE n.is_deleted = 0
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0
              GROUP BY n.id
              ORDER BY n.updated_at DESC",
         )?;

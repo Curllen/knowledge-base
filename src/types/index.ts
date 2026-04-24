@@ -24,6 +24,8 @@ export interface Note {
   is_daily: boolean;
   daily_date: string | null;
   is_pinned: boolean;
+  /** T-003: 是否"隐藏"（主列表/搜索/反链/图谱/RAG 全部过滤；wiki 跳转仍可访问）*/
+  is_hidden: boolean;
   word_count: number;
   created_at: string;
   updated_at: string;
@@ -242,6 +244,9 @@ export interface PlanTodayResponse {
 
 // ─── 导入 ─────────────────────────────────────
 
+/** 扫描到的文件在库中的匹配类型（后端扫描时判定） */
+export type ImportMatchKind = "new" | "path" | "fuzzy";
+
 /** 扫描到的文件条目 */
 export interface ScannedFile {
   path: string;
@@ -249,12 +254,29 @@ export interface ScannedFile {
   relative_dir: string;
   name: string;
   size: number;
+  /**
+   * 去重匹配结果：
+   * - "new"   全新文件
+   * - "path"  按 source_file_path 精确命中（已导入过）
+   * - "fuzzy" 按 (title, content_hash) 兜底命中（用户可能搬动过源文件）
+   */
+  match_kind: ImportMatchKind;
+  /** match_kind 非 "new" 时，指向已存在笔记的 id */
+  existing_note_id: number | null;
 }
+
+/**
+ * 导入冲突策略：遇到已存在的文件怎么处理
+ * - "skip"      跳过（默认，最安全）
+ * - "duplicate" 创建副本（标题加 " (2)"）
+ */
+export type ImportConflictPolicy = "skip" | "duplicate";
 
 /** 导入结果 */
 export interface ImportResult {
   imported: number;
   skipped: number;
+  duplicated: number;
   errors: string[];
 }
 
@@ -286,6 +308,18 @@ export interface OrphanImageClean {
   deleted: number;
   freedBytes: number;
   failed: string[];
+}
+
+/** 附件信息（save_note_attachment 返回） */
+export interface AttachmentInfo {
+  /** 绝对路径（前端用来构造 file:// 链接给 opener 打开） */
+  path: string;
+  /** 原始文件名（展示用） */
+  fileName: string;
+  /** 字节数（用于显示 "1.2 MB"） */
+  size: number;
+  /** MIME 类型 */
+  mime: string;
 }
 
 // ─── 导出 ─────────────────────────────────────

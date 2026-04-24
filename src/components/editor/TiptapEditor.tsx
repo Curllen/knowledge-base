@@ -25,10 +25,11 @@ function getEditorMarkdown(editor: { storage: unknown }): string {
 }
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { message } from "antd";
 import { theme as antdTheme } from "antd";
-import { imageApi } from "@/lib/api";
+import { attachmentApi, imageApi } from "@/lib/api";
 import { EditorToolbar } from "./EditorToolbar";
 import { AiWriteMenu } from "./AiWriteMenu";
 import { WikiLinkDecoration } from "./WikiLinkDecoration";
@@ -38,16 +39,19 @@ import "tippy.js/dist/tippy.css";
 const lowlight = createLowlight(common);
 
 /**
- * 从 Clipboard/DataTransfer 收集所有图片文件。
+ * 从 Clipboard/DataTransfer 收集所有文件，按 predicate 筛选。
  * Why: 部分来源（浏览器、某些 IM 工具）`files` 只给第一个，但 `items[]` 里齐全；
- *      用 Map<File> 去重避免两边都给时重复插入。
+ *      用 Set<File> 去重避免两边都给时重复插入。
  */
-function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
+function collectFiles(
+  dt: DataTransfer | null | undefined,
+  predicate: (f: File) => boolean,
+): File[] {
   if (!dt) return [];
   const seen = new Set<File>();
   const out: File[] = [];
   const push = (f: File | null) => {
-    if (f && f.type.startsWith("image/") && !seen.has(f)) {
+    if (f && predicate(f) && !seen.has(f)) {
       seen.add(f);
       out.push(f);
     }
@@ -62,6 +66,87 @@ function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
     for (let i = 0; i < dt.files.length; i++) push(dt.files[i]);
   }
   return out;
+}
+
+function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
+  return collectFiles(dt, (f) => f.type.startsWith("image/"));
+}
+
+/** 文本类拖入：.md/.markdown/.txt（按 MIME 或扩展名识别） */
+const TEXT_FILE_EXTS = new Set(["md", "markdown", "txt"]);
+function collectTextFiles(dt: DataTransfer | null | undefined): File[] {
+  return collectFiles(dt, (f) => {
+    if (f.type === "text/plain" || f.type === "text/markdown") return true;
+    const dot = f.name.lastIndexOf(".");
+    if (dot < 0) return false;
+    return TEXT_FILE_EXTS.has(f.name.slice(dot + 1).toLowerCase());
+  });
+}
+
+/**
+ * 通用附件拖入：所有非图片、非文本、非"可执行黑名单"的文件。
+ *
+ * 黑名单与 Rust 侧 `services/attachment.rs::BLOCKED_EXTS` 保持同步，前端提前拦截
+ * 给出友好提示；服务端仍会二次校验（纵深防御）。
+ */
+const ATTACHMENT_BLOCKED_EXTS = new Set([
+  "exe", "msi", "bat", "cmd", "ps1", "vbs", "vbe", "js", "jse", "wsf", "wsh",
+  "sh", "app", "dmg", "scr", "com", "pif", "dll", "sys", "drv", "cpl", "hta",
+  "jar", "apk", "ipa", "deb", "rpm",
+]);
+
+function getExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+}
+
+function collectAttachmentFiles(dt: DataTransfer | null | undefined): {
+  files: File[];
+  blocked: string[];
+} {
+  const blocked: string[] = [];
+  const files = collectFiles(dt, (f) => {
+    if (f.type.startsWith("image/")) return false; // 图片走图片分支
+    const ext = getExt(f.name);
+    if (TEXT_FILE_EXTS.has(ext)) return false; // 文本走文本分支
+    if (ATTACHMENT_BLOCKED_EXTS.has(ext)) {
+      blocked.push(f.name);
+      return false;
+    }
+    return true;
+  });
+  return { files, blocked };
+}
+
+/** 人类可读的字节数（1234 → "1.2 KB"）；纯展示用，不参与持久化 */
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+/** 把绝对路径转成 file:// URL，路径里的 `\\` 替换为 `/`，各段做 URI 编码 */
+function pathToFileUrl(absPath: string): string {
+  const normalized = absPath.replace(/\\/g, "/");
+  // 保留 `/` 作分隔符，逐段 encodeURIComponent 避免空格/中文/括号破坏链接
+  const encoded = normalized
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  return normalized.startsWith("/") ? `file://${encoded}` : `file:///${encoded}`;
+}
+
+/** 反解 file:// URL 拿回绝对路径，供 opener 使用 */
+function fileUrlToPath(url: string): string {
+  const trimmed = url.replace(/^file:\/\/\/?/, "");
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
 }
 
 /** 将 File 对象转为 base64（不含 data URL 前缀） */
@@ -202,6 +287,100 @@ export function TiptapEditor({
     [noteId],
   );
 
+  /**
+   * 处理拖入的通用附件：上传到 kb_assets/attachments/<note_id>/ 后，
+   * 以普通 markdown 链接插入到光标处 —— 链接文本形如 "📎 filename.pdf (1.2 MB)"，
+   * href 是 file:// 绝对路径；点击时由 DOM 级 click handler 拦截并调 opener。
+   *
+   * Why 不用自定义 Tiptap 节点：保持 markdown 序列化零改造（依赖现有 Link 扩展），
+   *      将来需要卡片化 UI 时，可升级为自定义 node + nodeView，不影响存储格式。
+   */
+  const handleAttachmentFiles = useCallback(
+    async (files: File[], editor: ReturnType<typeof useEditor>) => {
+      if (!editor || files.length === 0) return;
+
+      // 与图片同一套 noteId 获取流程（daily note 首次写入时自动建档）
+      let effectiveNoteId = noteId;
+      if (!effectiveNoteId && ensureNoteIdRef.current) {
+        try {
+          effectiveNoteId = await ensureNoteIdRef.current();
+        } catch (e) {
+          message.error(`附件保存失败: ${e}`);
+          return;
+        }
+      }
+      if (!effectiveNoteId) {
+        message.warning("请先保存笔记后再拖入附件");
+        return;
+      }
+
+      const results = await Promise.all(
+        files.map(async (file) => {
+          try {
+            const base64 = await fileToBase64(file);
+            const info = await attachmentApi.save(
+              effectiveNoteId!,
+              file.name,
+              base64,
+            );
+            return { ok: true as const, info };
+          } catch (e) {
+            return { ok: false as const, name: file.name, err: String(e) };
+          }
+        }),
+      );
+
+      // 批量构造要插入的 link nodes，最后一次性 insert（避免多次 onUpdate 连环刷新）
+      const nodes: Array<{
+        type: "text";
+        text: string;
+        marks: Array<{ type: "link"; attrs: { href: string } }>;
+      }> = [];
+      for (const r of results) {
+        if (r.ok) {
+          const label = `📎 ${r.info.fileName} (${humanSize(r.info.size)})`;
+          const href = pathToFileUrl(r.info.path);
+          nodes.push({
+            type: "text",
+            text: label,
+            marks: [{ type: "link", attrs: { href } }],
+          });
+          // 在相邻附件之间加换行，避免挤在一起
+          nodes.push({ type: "text", text: "\n" } as unknown as (typeof nodes)[number]);
+        } else {
+          message.error(`附件保存失败(${r.name}): ${r.err}`);
+        }
+      }
+      if (nodes.length === 0) return;
+
+      editor.chain().focus().insertContent(nodes).run();
+    },
+    [noteId],
+  );
+
+  /**
+   * 处理拖入的 .md/.txt：读文本后附加到文末，走 setContent 经 tiptap-markdown 解析渲染。
+   * Why: ProseMirror 的 insertContent 不走 markdown 解析管线；replace 整篇才能让 md 语法正确渲染。
+   *      代价是光标会跳到末尾，但"拖入新文件 = 追加内容"的心智模型下可接受。
+   */
+  const handleTextFiles = useCallback(
+    async (files: File[], editor: ReturnType<typeof useEditor>) => {
+      if (!editor || files.length === 0) return;
+      try {
+        const texts = await Promise.all(files.map((f) => f.text()));
+        const currentMd = getEditorMarkdown(editor);
+        const separator = currentMd.trim() ? "\n\n" : "";
+        const appendMd = texts.join("\n\n");
+        editor.commands.setContent(currentMd + separator + appendMd);
+        editor.commands.focus("end");
+        message.success(`已插入 ${files.length} 个文本文件`);
+      } catch (e) {
+        message.error(`文件读取失败: ${e}`);
+      }
+    },
+    [],
+  );
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -286,10 +465,52 @@ export function TiptapEditor({
           handleImageFiles(images, editor);
           return true;
         }
+        const texts = collectTextFiles(event.dataTransfer);
+        if (texts.length > 0) {
+          event.preventDefault();
+          handleTextFiles(texts, editor);
+          return true;
+        }
+        const { files: attachments, blocked } = collectAttachmentFiles(
+          event.dataTransfer,
+        );
+        if (blocked.length > 0) {
+          message.warning(
+            `已拦截 ${blocked.length} 个可执行/脚本文件（禁止作为附件）`,
+          );
+        }
+        if (attachments.length > 0) {
+          event.preventDefault();
+          handleAttachmentFiles(attachments, editor);
+          return true;
+        }
         return false;
       },
     },
   });
+
+  // 拦截编辑器内 file:// 链接的点击，交给 opener 用系统默认程序打开。
+  // Why: Link 扩展配置 openOnClick=false，默认点击无效；附件链接靠 DOM 事件代理开。
+  //      普通 http(s) 链接此处不介入，由外层页面其他逻辑处理。
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom as HTMLElement;
+    const handler = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null;
+      const anchor = target?.closest("a") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href.startsWith("file://")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const path = fileUrlToPath(href);
+      void openPath(path).catch((e) => {
+        message.error(`打开附件失败: ${e}`);
+      });
+    };
+    dom.addEventListener("click", handler);
+    return () => dom.removeEventListener("click", handler);
+  }, [editor]);
 
   // 外部 content 变化时同步（如初次加载）
   useEffect(() => {

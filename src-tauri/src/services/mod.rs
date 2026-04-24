@@ -1,8 +1,10 @@
 pub mod ai;
+pub mod attachment;
 pub mod config;
 pub mod crypto;
 pub mod daily;
 pub mod folder;
+pub mod hash;
 pub mod http_client;
 pub mod links;
 pub mod note;

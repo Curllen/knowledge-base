@@ -13,6 +13,7 @@ import GraphPage from "@/pages/graph";
 import AiChatPage from "@/pages/ai";
 import TasksPage from "@/pages/tasks";
 import PromptsPage from "@/pages/prompts";
+import HiddenPage from "@/pages/hidden";
 
 const router = createHashRouter([
   {
@@ -25,6 +26,7 @@ const router = createHashRouter([
       { path: "search", element: <SearchPage /> },
       { path: "tags", element: <TagsPage /> },
       { path: "trash", element: <TrashPage /> },
+      { path: "hidden", element: <HiddenPage /> },
       { path: "daily", element: <DailyPage /> },
       { path: "graph", element: <GraphPage /> },
       { path: "ai", element: <AiChatPage /> },

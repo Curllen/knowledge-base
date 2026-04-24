@@ -32,15 +32,17 @@ import {
   FolderOpen,
   FolderInput,
   Sparkles,
+  EyeOff,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOutlined } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
 import { folderApi, importApi } from "@/lib/api";
-import type { Folder } from "@/types";
+import type { Folder, ScannedFile } from "@/types";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
+import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 
 /** 导航菜单项（静态部分，用于路由高亮匹配） */
 const navItems = [
@@ -58,6 +60,7 @@ const navItems = [
 
 /** 底部快捷入口 */
 const bottomItems = [
+  { key: "/hidden", icon: <EyeOff size={16} />, label: "隐藏笔记" },
   { key: "/trash", icon: <Trash2 size={16} />, label: "回收站" },
 ];
 
@@ -161,6 +164,13 @@ export function Sidebar() {
 
   // 当前选中的节点（用于 F2 快捷键）
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // 扫描文件夹导入的预览弹窗状态
+  const [importPreview, setImportPreview] = useState<{
+    files: ScannedFile[];
+    rootPath: string;
+    folderId: number;
+  } | null>(null);
 
   // 右键菜单（Tree 级别，使用幻影锚点 Dropdown 定位）
   const [contextMenu, setContextMenu] = useState<{
@@ -597,7 +607,7 @@ export function Sidebar() {
       if (!picked || Array.isArray(picked)) return;
       const rootPath = picked;
       const hide = message.loading("扫描中…", 0);
-      let files;
+      let files: ScannedFile[];
       try {
         files = await importApi.scan(rootPath);
       } catch (e) {
@@ -610,58 +620,8 @@ export function Sidebar() {
         message.info("该文件夹下没有 .md 文件");
         return;
       }
-      const subdirCount = new Set(
-        files.map((f) => f.relative_dir).filter(Boolean),
-      ).size;
-      const rootName =
-        rootPath.split(/[\\/]/).filter(Boolean).pop() ?? "导入";
-      Modal.confirm({
-        title: "确认导入",
-        content: (
-          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-            扫描到 <strong>{files.length}</strong> 个 .md 文件
-            {subdirCount > 0 && `，分布在 ${subdirCount} 个子目录中`}。
-            <br />
-            将保留源目录层级，并在当前文件夹下创建
-            <strong style={{ margin: "0 4px" }}>{rootName}</strong>
-            作为根文件夹。
-          </div>
-        ),
-        okText: "开始导入",
-        cancelText: "取消",
-        async onOk() {
-          const paths = files!.map((f) => f.path);
-          const hide2 = message.loading(
-            `正在导入 ${paths.length} 个文件…`,
-            0,
-          );
-          try {
-            const result = await importApi.importSelected(
-              paths,
-              folderId,
-              rootPath,
-              true,
-            );
-            hide2();
-            if (result.imported > 0) {
-              message.success(
-                `已导入 ${result.imported} 篇到此文件夹，保留层级`,
-              );
-            }
-            if (result.errors.length > 0) {
-              message.warning(
-                `${result.errors.length} 个文件失败，详见控制台`,
-              );
-              console.warn("[import] 失败明细:", result.errors);
-            }
-            useAppStore.getState().bumpNotesRefresh();
-            useAppStore.getState().bumpFoldersRefresh();
-          } catch (e) {
-            hide2();
-            message.error(`导入失败: ${e}`);
-          }
-        },
-      });
+      // 打开预览弹窗，等用户确认策略后再真正导入
+      setImportPreview({ files, rootPath, folderId });
     } catch (e) {
       message.error(`选择目录失败: ${e}`);
     }
@@ -979,6 +939,49 @@ export function Sidebar() {
             }}
           />
         </Dropdown>
+      )}
+
+      {/* 扫描文件夹 → 预览 → 导入 */}
+      {importPreview && (
+        <ImportPreviewModal
+          open
+          files={importPreview.files}
+          rootPath={importPreview.rootPath}
+          defaultPreserveRoot
+          onCancel={() => setImportPreview(null)}
+          onConfirm={async ({ policy, preserveRoot }) => {
+            const { files, rootPath, folderId } = importPreview;
+            setImportPreview(null);
+            const paths = files.map((f) => f.path);
+            const hide = message.loading(`正在导入 ${paths.length} 个文件…`, 0);
+            try {
+              const result = await importApi.importSelected(
+                paths,
+                folderId,
+                rootPath,
+                preserveRoot,
+                policy,
+              );
+              hide();
+              const parts: string[] = [];
+              if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
+              if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
+              if (result.skipped > 0) parts.push(`跳过 ${result.skipped} 篇`);
+              if (parts.length > 0) message.success(parts.join("，"));
+              if (result.errors.length > 0) {
+                message.warning(
+                  `${result.errors.length} 个文件失败，详见控制台`,
+                );
+                console.warn("[import] 失败明细:", result.errors);
+              }
+              useAppStore.getState().bumpNotesRefresh();
+              useAppStore.getState().bumpFoldersRefresh();
+            } catch (e) {
+              hide();
+              message.error(`导入失败: ${e}`);
+            }
+          }}
+        />
       )}
     </div>
   );

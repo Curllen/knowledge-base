@@ -58,33 +58,46 @@
 
 #### T-002 · Linux 构建与发行
 
-- **状态**：`pending`
+- **状态**：`completed`（代码维度）· 归档日期：2026-04-24
 - **来源建议**：Tonkv "必须要有多端，安卓，linux 都要有"（Linux 部分）
 - **价值**：⭐⭐⭐  成本：极低
-- **初步设想**：
-  - CI 增加 Linux target（AppImage / deb）
-  - 验证 SQLite、文件系统、字体渲染在主流发行版（Ubuntu 22.04+）正常
-- **可能涉及的层**：
-  - CI 配置（`.github/workflows/`、`release-config.json`）
-  - 图标 / 元数据已有，一般无需改
-- **开工前需确认**：是否需要代码签名 / 发布到 Flathub？还是只挂 GitHub/Gitee Release？
+- **实际发现**：代码配置**早已在前期工作中完成**，无需额外开发：
+  - `.github/workflows/release.yml` matrix 含 `ubuntu-22.04 + --bundles deb,appimage`
+  - Linux 系统依赖安装步骤齐全（webkit2gtk-4.1 / soup-3.0 / ayatana-appindicator3）
+  - `src-tauri/tauri.conf.json` 有 `bundle.linux.deb.depends` + `appimage` 配置
+  - `.claude/release-config.json` 和 `release-publish` skill 均已文档化 Linux 发布流程
+- **遗留运维项（非代码）**：
+  - ⚠️ 首次 Linux CI 尚未真正触发过（`knowledge-base-release/update.json` 还没有 `linux-x86_64` 条目；`releases/v1.1.0/` 下无 Linux 产物）
+  - 下次 `/release` 发版会自动跑 Linux CI，按 `release-publish` skill 步骤 7~10 将 Linux 产物复制到 release 仓库 + 上传 R2 + 更新 update.json 即可闭环
 
 ---
 
 #### T-003 · 笔记"隐藏"标记（B1 轻量版）
 
-- **状态**：`pending`
+- **状态**：`in_progress`  · 开工：2026-04-24
 - **来源建议**：鹏钧九派 "有些文章需要进行加密或者设置一个隐藏，因为存在他人使用电脑的问题"
 - **价值**：⭐⭐⭐⭐  成本：中
-- **初步设想**：
-  - 笔记加 `is_hidden` 布尔字段
-  - 默认模式下，笔记列表、全文搜索、知识图谱、双向链接反查都**过滤**隐藏笔记
-  - 顶部栏加"显示隐藏笔记"开关（可加简单 PIN 保护，避免误操作揭示）
-  - **这是"隐藏"，不是"加密"**——只防邻居瞥一眼，防不住有心人
-- **可能涉及的层**：
-  - 后端：`database/schema.rs` 加字段迁移；`database/note.rs` 所有查询加 `WHERE is_hidden=0 OR :show_hidden`；FTS5 索引也要加过滤
-  - 前端：`store` 加 `showHidden` 状态；列表页/搜索页/图谱页传入该开关
-- **开工前需确认**：是否同时要 PIN 码门禁？还是先做最小版本（开关切换即可）？
+- **已确认决策**：
+  - ✅ 独立路由 `/hidden`（类似 `/trash`），主界面完全看不到隐藏笔记
+  - ✅ 标记入口：编辑器顶部按钮；`/hidden` 页"取消隐藏"按钮
+  - ✅ 过滤范围：列表/搜索/图谱/反向链接全过滤；wiki link 跳转保留
+  - ✅ v1 不加 PIN（留给 T-007 加密）
+  - ✅ daily / 模板不支持隐藏
+- **子任务进度**：
+  - [x] 后端 schema v21：notes.is_hidden + 部分索引（activeonly）
+  - [x] 后端 models：Note.is_hidden
+  - [x] 后端 database/notes.rs：list_notes 加过滤；8 个 Note 构造位置全部同步新列；新增 list_hidden_notes + set_note_hidden
+  - [x] 后端 database/search.rs (全文搜索)、links.rs (search_link_targets / get_backlinks / get_graph_data)、ai.rs (RAG)、tags.rs (list_notes_by_tag) 都加 is_hidden=0 过滤
+  - [x] 后端 services/note.rs + commands/notes.rs + lib.rs 注册 set_note_hidden / list_hidden_notes
+  - [x] 前端 types.Note.is_hidden + lib/api (noteApi.setHidden + hiddenApi.list)
+  - [x] 前端 pages/hidden/index.tsx（列表 + 取消隐藏 + 点标题跳编辑器）
+  - [x] 前端编辑器顶部"Eye/EyeOff"按钮 + handleToggleHidden
+  - [x] 前端 Router + Sidebar 底部快捷入口"隐藏笔记"
+  - [x] cargo check + tsc --noEmit 全通过
+  - [ ] **待用户手动验证**：
+        1. 编辑器点"隐藏"按钮 → 主列表 / 搜索 / 图谱 / AI 问答都看不到这条
+        2. 侧栏"隐藏笔记"入口能看到，点"取消隐藏"后主列表恢复可见
+        3. `[[被隐藏笔记标题]]` 仍可点击跳转（弱隐藏设计）
 
 ---
 

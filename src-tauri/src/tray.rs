@@ -7,7 +7,12 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::services::sync_scheduler;
 
-pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+/// 初始化系统托盘
+/// `instance_id`: None = 默认实例；Some(N) = 第 N 个多开实例（在 tooltip 标识）
+pub fn setup_tray(
+    app: &tauri::App,
+    instance_id: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // 快捷操作
     let new_note = MenuItem::with_id(app, "new-note", "新建笔记", true, Some("Ctrl+N"))?;
     let open_daily = MenuItem::with_id(app, "open-daily", "打开今日每日笔记", true, None::<&str>)?;
@@ -78,15 +83,16 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let icon = app.default_window_icon().ok_or("应用图标未配置")?.clone();
 
-    let tooltip = if cfg!(debug_assertions) {
-        "知识库 [DEV]"
-    } else {
-        "知识库"
+    let tooltip: String = match (cfg!(debug_assertions), instance_id) {
+        (true, None) => "知识库 [DEV]".to_string(),
+        (true, Some(n)) => format!("知识库 [DEV 实例 {}]", n),
+        (false, None) => "知识库".to_string(),
+        (false, Some(n)) => format!("知识库 [实例 {}]", n),
     };
 
     TrayIconBuilder::new()
         .icon(icon)
-        .tooltip(tooltip)
+        .tooltip(&tooltip)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {

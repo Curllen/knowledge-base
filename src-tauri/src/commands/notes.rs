@@ -64,3 +64,27 @@ pub fn list_notes(
 ) -> Result<PageResult<Note>, String> {
     NoteService::list(&state.db, &query).map_err(|e| e.to_string())
 }
+
+// ─── T-003 隐藏笔记 Commands ────────────────────
+
+/// 切换笔记"隐藏"状态；返回切换后的新状态
+///
+/// 隐藏后主列表 / 搜索 / 反链 / 图谱 / RAG 全部不显示；取消隐藏立刻恢复可见。
+#[tauri::command]
+pub fn set_note_hidden(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    hidden: bool,
+) -> Result<bool, String> {
+    NoteService::set_hidden(&state.db, id, hidden).map_err(|e| e.to_string())
+}
+
+/// 列出所有隐藏笔记（分页）—— 用于 /hidden 专用页
+#[tauri::command]
+pub fn list_hidden_notes(
+    state: tauri::State<'_, AppState>,
+    page: Option<usize>,
+    page_size: Option<usize>,
+) -> Result<PageResult<Note>, String> {
+    NoteService::list_hidden(&state.db, page, page_size).map_err(|e| e.to_string())
+}

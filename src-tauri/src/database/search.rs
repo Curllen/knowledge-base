@@ -76,10 +76,11 @@ impl Database {
             .map(|(i, _)| format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1))
             .collect();
 
+        // T-003: 过滤隐藏笔记；隐藏笔记在主搜索里完全不可见
         let sql = format!(
             "SELECT n.id, n.title, n.content, n.updated_at, n.folder_id
              FROM notes n
-             WHERE n.is_deleted = 0 AND ({})
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND ({})
              ORDER BY n.updated_at DESC
              LIMIT ?{}",
             where_clauses.join(" AND "),

@@ -18,7 +18,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi } from "@/lib/api";
@@ -722,6 +722,23 @@ export default function NoteEditorPage() {
     }
   }
 
+  /**
+   * T-003: 切换笔记"隐藏"状态。
+   * 隐藏后主界面看不到此笔记，但保留在当前编辑器 tab 里以便继续编辑；
+   * 取消隐藏立即回到普通可见态。
+   */
+  async function handleToggleHidden() {
+    if (!note) return;
+    const next = !note.is_hidden;
+    try {
+      await noteApi.setHidden(noteId, next);
+      setNote((prev) => (prev ? { ...prev, is_hidden: next } : prev));
+      message.success(next ? "已隐藏（主界面不可见）" : "已取消隐藏");
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
   /** Ctrl/Cmd + 点击 [[标题]] 时跳转到对应笔记 */
   async function handleWikiLinkClick(wikiTitle: string) {
     try {
@@ -937,6 +954,19 @@ export default function NoteEditorPage() {
               type={note?.is_pinned ? "primary" : "default"}
               icon={<Pin size={16} />}
               onClick={handleTogglePin}
+            />
+          </Tooltip>
+          <Tooltip
+            title={
+              note?.is_hidden
+                ? "取消隐藏（回到主列表）"
+                : "隐藏此笔记（主列表/搜索/图谱不可见）"
+            }
+          >
+            <Button
+              type={note?.is_hidden ? "primary" : "default"}
+              icon={note?.is_hidden ? <EyeOff size={16} /> : <Eye size={16} />}
+              onClick={handleToggleHidden}
             />
           </Tooltip>
           <Button

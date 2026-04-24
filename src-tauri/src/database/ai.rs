@@ -449,10 +449,11 @@ impl Database {
                 })
                 .collect();
 
+            // T-003: RAG 检索结果不包含隐藏笔记（否则 AI 对话会泄露隐藏内容到历史）
             let sql = format!(
                 "SELECT n.id, n.title, n.content, ({hits}) AS hits
                  FROM notes n
-                 WHERE n.is_deleted = 0 AND ({where_})
+                 WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND ({where_})
                  ORDER BY hits DESC, n.updated_at DESC
                  LIMIT ?{limit_param}",
                 hits = hits_sum,

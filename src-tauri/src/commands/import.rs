@@ -1,13 +1,20 @@
 use tauri::AppHandle;
 
-use crate::models::{ImportResult, OpenMarkdownResult, ScannedFile};
+use crate::models::{ImportConflictPolicy, ImportResult, OpenMarkdownResult, ScannedFile};
 use crate::services;
 use crate::state::AppState;
 
-/// 扫描文件夹中的 Markdown 文件（不导入，仅返回文件列表）
+/// 扫描文件夹中的 Markdown 文件（不导入，返回分桶后的文件列表）
+///
+/// 每条带 match_kind + existing_note_id，便于前端预览弹窗展示
+/// "全新 / 已导入过 / 可能重复" 三桶统计。
 #[tauri::command]
-pub fn scan_markdown_folder(path: String) -> Result<Vec<ScannedFile>, String> {
-    services::import::ImportService::scan_markdown_folder(&path).map_err(|e| e.to_string())
+pub fn scan_markdown_folder(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Vec<ScannedFile>, String> {
+    services::import::ImportService::scan_markdown_folder(&state.db, &path)
+        .map_err(|e| e.to_string())
 }
 
 /// 按选定的文件路径列表导入 Markdown 文件
@@ -15,6 +22,7 @@ pub fn scan_markdown_folder(path: String) -> Result<Vec<ScannedFile>, String> {
 /// - `folder_id`: 导入到哪个文件夹下（None = 根）
 /// - `root_path`: 扫描根路径；传了才能按相对目录重建文件夹树
 /// - `preserve_root`: 是否在目标下多套一层"源根目录名"
+/// - `policy`: 遇到已存在文件的处理策略（Skip / Duplicate），省略按 Skip
 #[tauri::command]
 pub fn import_selected_files(
     state: tauri::State<'_, AppState>,
@@ -23,6 +31,7 @@ pub fn import_selected_files(
     folder_id: Option<i64>,
     root_path: Option<String>,
     preserve_root: Option<bool>,
+    policy: Option<ImportConflictPolicy>,
 ) -> Result<ImportResult, String> {
     services::import::ImportService::import_selected_files(
         &state.db,
@@ -30,6 +39,7 @@ pub fn import_selected_files(
         folder_id,
         root_path.as_deref(),
         preserve_root.unwrap_or(false),
+        policy.unwrap_or_default(),
         &app,
     )
     .map_err(|e| e.to_string())

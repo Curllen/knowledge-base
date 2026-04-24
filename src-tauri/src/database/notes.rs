@@ -10,15 +10,24 @@ impl Database {
 
     /// 创建笔记
     ///
-    /// 同步维护 `title_normalized` 列（v17 引入），用于 wiki 链接查找走索引而非全表扫。
+    /// 同步维护：
+    /// - `title_normalized`（v17）：wiki 链接查找走索引
+    /// - `content_hash`（v22）：导入去重用的 SHA-256 指纹
     pub fn create_note(&self, input: &NoteInput) -> Result<Note, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let normalized = crate::database::links::normalize_title(&input.title);
+        let content_hash = crate::services::hash::sha256_hex(&input.content);
         conn.execute(
-            "INSERT INTO notes (title, content, folder_id, title_normalized)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![input.title, input.content, input.folder_id, normalized],
+            "INSERT INTO notes (title, content, folder_id, title_normalized, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                input.title,
+                input.content,
+                input.folder_id,
+                normalized,
+                content_hash
+            ],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -27,17 +36,26 @@ impl Database {
 
     /// 更新笔记
     ///
-    /// 同步维护 `title_normalized` 列（v17 引入）。
+    /// 同步维护 `title_normalized`（v17）与 `content_hash`（v22）。
     pub fn update_note(&self, id: i64, input: &NoteInput) -> Result<Note, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let normalized = crate::database::links::normalize_title(&input.title);
+        let content_hash = crate::services::hash::sha256_hex(&input.content);
         let affected = conn.execute(
             "UPDATE notes SET title = ?1, content = ?2, folder_id = ?3,
                     title_normalized = ?4,
+                    content_hash = ?5,
                     updated_at = datetime('now', 'localtime')
-             WHERE id = ?5",
-            params![input.title, input.content, input.folder_id, normalized, id],
+             WHERE id = ?6",
+            params![
+                input.title,
+                input.content,
+                input.folder_id,
+                normalized,
+                content_hash,
+                id
+            ],
         )?;
 
         if affected == 0 {
@@ -56,11 +74,14 @@ impl Database {
     }
 
     /// 获取单个笔记
+    ///
+    /// 不过滤 `is_hidden`：wiki link [[...]] 点击跳转需要能打开隐藏笔记；
+    /// 主列表/搜索等入口由各自的 DAO 方法负责过滤。
     pub fn get_note(&self, id: i64) -> Result<Option<Note>, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes WHERE id = ?1",
         )?;
 
@@ -74,11 +95,12 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })
             .ok();
@@ -96,8 +118,9 @@ impl Database {
     ) -> Result<(Vec<Note>, usize), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
-        // 构建 WHERE 条件（始终过滤已删除笔记）
-        let mut conditions = vec!["is_deleted = 0".to_string()];
+        // 构建 WHERE 条件（始终过滤已删除 + 隐藏笔记）
+        // T-003: is_hidden=0 在所有主列表入口强制过滤；隐藏笔记只能从 /hidden 专用页访问
+        let mut conditions = vec!["is_deleted = 0".to_string(), "is_hidden = 0".to_string()];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(fid) = folder_id {
@@ -125,7 +148,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let data_sql = format!(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes {} ORDER BY updated_at DESC LIMIT ?{} OFFSET ?{}",
             where_clause,
             param_values.len() + 1,
@@ -150,15 +173,82 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        Ok((notes, total))
+    }
+
+    // ─── T-003 隐藏笔记 DAO ─────────────────────────
+
+    /// 切换笔记的"隐藏"状态
+    ///
+    /// 隐藏后主列表 / 搜索 / 反链 / 图谱 / RAG 全部不显示；取消隐藏立刻恢复可见。
+    /// 返回切换后的新状态（true=已隐藏）。
+    pub fn set_note_hidden(&self, id: i64, hidden: bool) -> Result<bool, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET is_hidden = ?1, updated_at = datetime('now', 'localtime')
+             WHERE id = ?2 AND is_deleted = 0",
+            params![i32::from(hidden), id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(hidden)
+    }
+
+    /// 列出所有隐藏笔记（分页），按 updated_at DESC
+    ///
+    /// 与 list_notes 刚好相反——只取 is_hidden=1（仍过滤 is_deleted=0）。
+    pub fn list_hidden_notes(
+        &self,
+        page: usize,
+        page_size: usize,
+    ) -> Result<(Vec<Note>, usize), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let total: usize = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0 AND is_hidden = 1",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let offset = (page.saturating_sub(1)) * page_size;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden,
+                    word_count, created_at, updated_at, source_file_path, source_file_type
+             FROM notes
+             WHERE is_deleted = 0 AND is_hidden = 1
+             ORDER BY updated_at DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let notes = stmt
+            .query_map(params![page_size as i64, offset as i64], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    folder_id: row.get(3)?,
+                    is_daily: row.get::<_, i32>(4)? != 0,
+                    daily_date: row.get(5)?,
+                    is_pinned: row.get::<_, i32>(6)? != 0,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok((notes, total))
     }
 
@@ -257,7 +347,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -273,11 +363,12 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -350,7 +441,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -364,11 +455,12 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })
             .ok();
@@ -382,7 +474,7 @@ impl Database {
 
         // 先查询是否已存在
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -396,11 +488,12 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })
             .ok();
@@ -412,10 +505,11 @@ impl Database {
         // 不存在则创建
         let title = format!("{} 的日记", date);
         let normalized = crate::database::links::normalize_title(&title);
+        let empty_hash = crate::services::hash::sha256_hex("");
         conn.execute(
-            "INSERT INTO notes (title, content, is_daily, daily_date, title_normalized)
-             VALUES (?1, '', 1, ?2, ?3)",
-            params![title, date, normalized],
+            "INSERT INTO notes (title, content, is_daily, daily_date, title_normalized, content_hash)
+             VALUES (?1, '', 1, ?2, ?3, ?4)",
+            params![title, date, normalized, empty_hash],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -447,7 +541,7 @@ impl Database {
         id: i64,
     ) -> Result<Note, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, word_count, created_at, updated_at, source_file_path, source_file_type
              FROM notes WHERE id = ?1",
         )?;
 
@@ -460,11 +554,12 @@ impl Database {
                 is_daily: row.get::<_, i32>(4)? != 0,
                 daily_date: row.get(5)?,
                 is_pinned: row.get::<_, i32>(6)? != 0,
-                word_count: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-                source_file_path: row.get(10)?,
-                source_file_type: row.get(11)?,
+                is_hidden: row.get::<_, i32>(7)? != 0,
+                word_count: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+                source_file_path: row.get(11)?,
+                source_file_type: row.get(12)?,
             })
         })?;
 
@@ -513,16 +608,42 @@ impl Database {
     /// 只更新笔记正文，不动 title/folder_id/source_file_path 等元数据
     ///
     /// 用于"外部编辑过 md 源文件 → 重新打开时同步回笔记"的场景。
+    /// 同步更新 content_hash（v22）。
     pub fn update_note_content(&self, id: i64, content: &str) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let content_hash = crate::services::hash::sha256_hex(content);
         let affected = conn.execute(
-            "UPDATE notes SET content = ?1, updated_at = datetime('now','localtime')
-             WHERE id = ?2",
-            params![content, id],
+            "UPDATE notes SET content = ?1, content_hash = ?2,
+                    updated_at = datetime('now','localtime')
+             WHERE id = ?3",
+            params![content, content_hash, id],
         )?;
         if affected == 0 {
             return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
         }
         Ok(())
+    }
+
+    /// 按 (title, content_hash) 查活跃笔记的 id —— 导入去重的兜底
+    ///
+    /// 和 `find_active_note_by_source_path` 的关系：
+    /// 主判用 source_file_path；若用户把源文件搬动过，path 匹配不到，再用
+    /// (title, content_hash) 兜底匹配"同标题+同内容"的已存在笔记。
+    /// 故意用 AND 而非仅 hash——标题被改过说明用户主动区分，不该算重复。
+    pub fn find_active_note_by_title_and_hash(
+        &self,
+        title: &str,
+        content_hash: &str,
+    ) -> Result<Option<i64>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id FROM notes
+             WHERE title = ?1 AND content_hash = ?2 AND is_deleted = 0
+             LIMIT 1",
+        )?;
+        let result = stmt
+            .query_row(params![title, content_hash], |row| row.get::<_, i64>(0))
+            .ok();
+        Ok(result)
     }
 }

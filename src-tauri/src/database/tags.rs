@@ -160,10 +160,10 @@ impl Database {
     ) -> Result<(Vec<Note>, usize), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
-        // 查询总数
+        // 查询总数（T-003: 排除隐藏笔记）
         let total: usize = conn.query_row(
             "SELECT COUNT(*) FROM note_tags nt
-             INNER JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0
+             INNER JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0 AND n.is_hidden = 0
              WHERE nt.tag_id = ?1",
             params![tag_id],
             |row| row.get(0),
@@ -174,10 +174,10 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title, n.content, n.folder_id, n.is_daily, n.daily_date,
-                    n.is_pinned, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type
+                    n.is_pinned, n.is_hidden, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type
              FROM notes n
              INNER JOIN note_tags nt ON n.id = nt.note_id
-             WHERE nt.tag_id = ?1 AND n.is_deleted = 0
+             WHERE nt.tag_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
              ORDER BY n.updated_at DESC
              LIMIT ?2 OFFSET ?3",
         )?;
@@ -192,11 +192,12 @@ impl Database {
                     is_daily: row.get::<_, i32>(4)? != 0,
                     daily_date: row.get(5)?,
                     is_pinned: row.get::<_, i32>(6)? != 0,
-                    word_count: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    source_file_path: row.get(10)?,
-                    source_file_type: row.get(11)?,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    word_count: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    source_file_path: row.get(11)?,
+                    source_file_type: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
