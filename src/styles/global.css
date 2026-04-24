@@ -156,6 +156,9 @@ body,
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* 解除 .tiptap-wrapper 默认的 overflow:hidden，
+     否则会截断 sticky 参考链，导致工具栏在长文档里无法吸顶 */
+  overflow: visible;
 }
 
 .editor-content-area .tiptap-content {
