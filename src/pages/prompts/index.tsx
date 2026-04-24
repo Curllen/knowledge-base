@@ -336,7 +336,13 @@ export default function PromptsPage() {
         okText="保存"
         cancelText="取消"
         width={640}
+        centered
         destroyOnClose
+        styles={{
+          // Prompt 内容 textarea + 变量说明比较长，小屏会超出屏幕导致保存按钮看不见。
+          // 用 70vh 限高并让 body 独立滚动，底部 OK/Cancel 行永远可见。
+          body: { maxHeight: "70vh", overflowY: "auto", paddingRight: 12 },
+        }}
       >
         <Form form={form} layout="vertical" preserve={false}>
           <Form.Item
