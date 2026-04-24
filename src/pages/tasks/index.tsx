@@ -25,7 +25,9 @@ import {
   Link as LinkIcon,
   Trash2,
   Edit3,
+  Sparkles,
 } from "lucide-react";
+import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
@@ -139,6 +141,7 @@ export default function TasksPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"todo" | "done" | "all">("todo");
   const [createOpen, setCreateOpen] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
@@ -251,6 +254,13 @@ export default function TasksPage() {
               ]}
             />
           )}
+          <Button
+            icon={<Sparkles size={14} />}
+            onClick={() => setShowPlanModal(true)}
+            title="AI 根据笔记与现有待办，给出 3~7 条今日建议"
+          >
+            AI 规划今日
+          </Button>
           <Button
             type="primary"
             icon={<Plus size={14} />}
@@ -398,6 +408,15 @@ export default function TasksPage() {
         onSaved={() => {
           setEditing(null);
           loadTasks();
+        }}
+      />
+      <PlanTodayModal
+        open={showPlanModal}
+        onClose={() => setShowPlanModal(false)}
+        onSaved={() => {
+          // 刷新列表 + 侧边栏紧急待办计数
+          loadTasks();
+          useAppStore.getState().refreshTaskStats();
         }}
       />
     </div>

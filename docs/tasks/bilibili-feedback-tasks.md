@@ -114,19 +114,27 @@
 
 ---
 
-#### T-005 · AI 自动规划今日待办（基于 Skills）
+#### T-005 · AI 自动规划今日待办
 
-- **状态**：`pending`  · 依赖：T-004
+- **状态**：`in_progress`  · 开工：2026-04-24 · 依赖：T-004 ✅
 - **来源建议**：喝水小小能手（赞 23）"AI 可以自动规划今日待办事项"
-- **价值**：⭐⭐⭐⭐  成本：低（若 T-004 已完成）
-- **初步设想**：
-  - daily 页面加"AI 规划今日"按钮
-  - 调 AI，输入：昨日未完成 + 最近 N 天笔记摘要 + 已有日程
-  - AI 通过 Skills 调用 `create_task` 批量写入今日待办（默认草稿状态，用户确认后生效）
-- **可能涉及的层**：
-  - 后端：复用现有 tasks 相关 Command（已支持循环待办，见 6649094 commit）
-  - 前端：`pages/daily` 加"AI 规划"入口与草稿确认面板
-- **开工前需确认**：T-004 是否已落地？规划结果是直接写入还是先进草稿池？
+- **价值**：⭐⭐⭐⭐  成本：低
+- **已确认决策**：
+  - ✅ 不扩 Skills 框架（写入类走独立"AI 提议 → 用户确认"路径，Skills 保持只读）
+  - ✅ 入口同时放 /daily 和 /tasks（Sparkles "AI 规划今日"按钮）
+  - ✅ 支持用户输入"今日目标"（可选 textarea）
+  - ✅ AI 返回 JSON（`response_format: json_object`）后前端弹 Modal 让用户勾选/编辑/保存
+  - ✅ 保存默认 due_date=今天，用户可逐条改；展示 reason；不支持 Ollama
+- **子任务进度**：
+  - [x] 后端 models：PlanTodayRequest / TaskSuggestion / PlanTodayResponse
+  - [x] 后端 services/ai.rs：plan_today（聚合昨/今 daily + 过期任务 + 今日已有 → 非流式 + JSON + markdown 代码块兜底；3 单测通过）
+  - [x] 后端 commands/ai.rs：ai_plan_today Command + lib.rs 注册
+  - [x] 前端 types + lib/api.aiPlanApi
+  - [x] 前端 components/ai/PlanTodayModal.tsx（idle/loading/review 三阶段 + 勾选/编辑/删除/重新生成/批量保存）
+  - [x] 前端 daily（仅今日显示）+ tasks 页各加"AI 规划今日"按钮
+  - [x] cargo check + tsc + cargo test plan_today 3/3 全通过
+  - [ ] **待用户手动验证**：/daily 或 /tasks 点"AI 规划今日" → 填目标（可选）→ 生成 →
+        勾选建议 → 保存 → 列表出现新待办
 
 ---
 

@@ -6,7 +6,9 @@ use tokio::sync::watch;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{AiMessage, AiModel, SkillCall};
+use crate::models::{
+    AiMessage, AiModel, PlanTodayRequest, PlanTodayResponse, SkillCall, TaskQuery,
+};
 use crate::services::skills;
 
 /// 事件发射器 trait，用于抽象不同事件前缀
@@ -1156,4 +1158,234 @@ struct ToolCallAccum {
     name: String,
     /// 累加后的 arguments JSON 字符串（尚未解析）
     args_json: String,
+}
+
+impl AiService {
+    // ══════════════════════════════════════════════════════════════════
+    // T-005 AI 规划今日待办
+    // ══════════════════════════════════════════════════════════════════
+
+    /// 聚合上下文（昨日/今日 daily 笔记 + 未完成任务 + 今日已有任务）→ 喂 AI → 解析 JSON
+    ///
+    /// 故意走非流式：`response_format: json_object` 需要完整响应 + 前端不需要 token-by-token 体验。
+    /// 返回 `PlanTodayResponse`，前端把 `tasks` 展示为可编辑清单，用户确认后批量写库。
+    pub async fn plan_today(
+        db: &Database,
+        req: PlanTodayRequest,
+    ) -> Result<PlanTodayResponse, AppError> {
+        let model = db.get_default_ai_model()?;
+        if !matches!(model.provider.as_str(), "openai" | "claude" | "deepseek" | "zhipu") {
+            return Err(AppError::Custom(format!(
+                "AI 规划功能暂不支持 {} 协议，请切换到 OpenAI / DeepSeek / 智谱 / Claude 兼容模型。",
+                model.provider
+            )));
+        }
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // ─── 聚合上下文 ────────────────────────
+        let daily_today = db.get_daily(&today)?;
+        let daily_yesterday = db.get_daily(&yesterday)?;
+
+        // 未完成任务；按需过滤出"昨日未完成 + 过期"
+        let unfinished = db.list_tasks(TaskQuery {
+            status: Some(0),
+            keyword: None,
+            priority: None,
+        })?;
+
+        let carry_over: Vec<_> = if req.include_yesterday_unfinished {
+            unfinished
+                .iter()
+                .filter(|t| match &t.due_date {
+                    Some(d) => d.as_str() < today.as_str(), // 过期
+                    None => false,
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let today_existing: Vec<_> = unfinished
+            .iter()
+            .filter(|t| matches!(&t.due_date, Some(d) if d.starts_with(&today)))
+            .cloned()
+            .collect();
+
+        // ─── 构造 prompt ────────────────────────
+        let mut user_sections = Vec::<String>::new();
+        if let Some(goal) = req.goal.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            user_sections.push(format!("## 今日目标\n{}", goal));
+        }
+        if let Some(n) = &daily_yesterday {
+            let plain = strip_html(&n.content);
+            let snippet: String = plain.chars().take(600).collect();
+            if !snippet.trim().is_empty() {
+                user_sections.push(format!("## 昨日笔记摘要\n{}", snippet));
+            }
+        }
+        if let Some(n) = &daily_today {
+            let plain = strip_html(&n.content);
+            let snippet: String = plain.chars().take(600).collect();
+            if !snippet.trim().is_empty() {
+                user_sections.push(format!("## 今日笔记已有内容\n{}", snippet));
+            }
+        }
+        if !carry_over.is_empty() {
+            let lines: Vec<String> = carry_over
+                .iter()
+                .map(|t| {
+                    format!(
+                        "- 「{}」(过期于 {})",
+                        t.title,
+                        t.due_date.clone().unwrap_or_default()
+                    )
+                })
+                .collect();
+            user_sections.push(format!(
+                "## 需要顺延的过期未完成任务（{} 条）\n{}",
+                carry_over.len(),
+                lines.join("\n")
+            ));
+        }
+        if !today_existing.is_empty() {
+            let lines: Vec<String> = today_existing
+                .iter()
+                .map(|t| format!("- 「{}」", t.title))
+                .collect();
+            user_sections.push(format!(
+                "## 今天已有的任务（请不要重复建议）\n{}",
+                lines.join("\n")
+            ));
+        }
+        if user_sections.is_empty() {
+            user_sections.push(
+                "（无任何上下文；请根据常规工作/学习场景合理安排今天的 3~7 条待办）".to_string(),
+            );
+        }
+
+        let user_content = format!("请为我规划今天（{}）的待办。\n\n{}", today, user_sections.join("\n\n"));
+
+        let system_prompt = format!(
+            "你是一个日程规划助手。根据用户的笔记和已有任务，给出 3~7 条今天要做的具体待办。\
+             严格返回 JSON 对象，不要 markdown 代码块，不要任何额外文字，格式如下：\n\
+             {{\n  \
+             \"tasks\": [\n    \
+             {{\"title\": \"任务标题（简洁可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"{}\", \"reason\": \"为什么建议做这条\"}}\n  \
+             ],\n  \
+             \"summary\": \"今日总体思路（一句话）\"\n\
+             }}\n\n\
+             规则：\n\
+             1. priority: 0=紧急重要 / 1=普通 / 2=低，大多用 1\n\
+             2. important: true 表示艾森豪威尔重要性维度\n\
+             3. dueDate 都填成 {}\n\
+             4. title 必须是可执行动作（如『完成 xx』、『写 xx』），不要模糊项如『放松一下』\n\
+             5. 不要重复用户『已有任务』列表里的内容\n\
+             6. 用中文。",
+            today, today
+        );
+
+        let messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": user_content }),
+        ];
+
+        // ─── 发请求 ────────────────────────────
+        let client = crate::services::http_client::shared();
+        let url = build_openai_chat_url(&model.api_url);
+        let mut req_body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": false,
+            "response_format": { "type": "json_object" },
+        });
+        // Claude 兼容代理有些不支持 response_format，去掉该字段以防报错
+        if model.provider == "claude" {
+            req_body.as_object_mut().and_then(|m| m.remove("response_format"));
+        }
+
+        let mut builder = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&req_body);
+        if let Some(key) = &model.api_key {
+            if !key.is_empty() {
+                builder = builder.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let response = builder
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+        }
+
+        let resp_json: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
+        let content = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：缺少 choices[0].message.content".to_string()))?;
+
+        parse_plan_today_response(content).ok_or_else(|| {
+            AppError::Custom(format!(
+                "AI 返回的 JSON 无法解析。原始响应：\n{}",
+                content.chars().take(400).collect::<String>()
+            ))
+        })
+    }
+}
+
+/// 解析 AI 返回的 JSON 字符串为 PlanTodayResponse
+///
+/// 两轮兜底：
+/// 1. 直接 `serde_json::from_str`
+/// 2. 失败则剥 markdown 代码块 (```json ... ```) 再 parse
+/// 都失败返回 None，调用方把 None 当作"格式异常"错误。
+fn parse_plan_today_response(raw: &str) -> Option<PlanTodayResponse> {
+    if let Ok(r) = serde_json::from_str::<PlanTodayResponse>(raw.trim()) {
+        return Some(r);
+    }
+    // 剥 ```json ... ```（容忍 ``` 前后的空行）
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str(stripped).ok()
+}
+
+#[cfg(test)]
+mod plan_today_tests {
+    use super::*;
+
+    #[test]
+    fn parse_plain_json() {
+        let raw = r#"{"tasks":[{"title":"写周报","priority":1,"dueDate":"2026-04-24"}],"summary":"忙"}"#;
+        let r = parse_plan_today_response(raw).unwrap();
+        assert_eq!(r.tasks.len(), 1);
+        assert_eq!(r.tasks[0].title, "写周报");
+        assert_eq!(r.summary.as_deref(), Some("忙"));
+    }
+
+    #[test]
+    fn parse_with_markdown_fence() {
+        let raw = "```json\n{\"tasks\":[],\"summary\":\"\"}\n```";
+        let r = parse_plan_today_response(raw).unwrap();
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_fails_on_garbage() {
+        assert!(parse_plan_today_response("not json").is_none());
+    }
 }

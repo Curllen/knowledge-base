@@ -49,6 +49,8 @@ import type {
   TaskStats,
   PromptTemplate,
   PromptTemplateInput,
+  PlanTodayRequest,
+  PlanTodayResponse,
 } from "@/types";
 
 /** 系统相关 API */
@@ -335,6 +337,17 @@ export const aiWriteApi = {
     invoke<void>("ai_write_assist", { action, selectedText, context }),
   /** 取消写作辅助 */
   cancel: () => invoke<void>("cancel_ai_write_assist"),
+};
+
+/**
+ * T-005 AI 规划今日待办
+ *
+ * 非流式：典型耗时 5~15 秒。调用前 UI 要给骨架屏/加载态。
+ * 仅 OpenAI 兼容模型可用；Ollama 会返回错误字符串。
+ */
+export const aiPlanApi = {
+  planToday: (request: PlanTodayRequest) =>
+    invoke<PlanTodayResponse>("ai_plan_today", { request }),
 };
 
 /**

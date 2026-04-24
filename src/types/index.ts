@@ -214,6 +214,32 @@ export interface SkillCall {
   status: "running" | "ok" | "error";
 }
 
+// ─── AI 规划今日待办（T-005） ────────────
+
+export interface PlanTodayRequest {
+  /** 用户输入的"今日目标"，可留空 */
+  goal?: string | null;
+  /** 是否把昨日未完成/过期任务一起带进 AI 的上下文；默认 true */
+  includeYesterdayUnfinished?: boolean;
+}
+
+/** AI 对一条待办的建议；尚未写入 DB */
+export interface TaskSuggestion {
+  title: string;
+  /** 0=紧急 / 1=普通 / 2=低 */
+  priority?: number | null;
+  important?: boolean | null;
+  /** 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS' */
+  dueDate?: string | null;
+  /** AI 给出的推荐理由，UI 折叠展示 */
+  reason?: string | null;
+}
+
+export interface PlanTodayResponse {
+  tasks: TaskSuggestion[];
+  summary?: string | null;
+}
+
 // ─── 导入 ─────────────────────────────────────
 
 /** 扫描到的文件条目 */

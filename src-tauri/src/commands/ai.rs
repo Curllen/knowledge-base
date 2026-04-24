@@ -1,7 +1,9 @@
 use tauri::State;
 use tokio::sync::watch;
 
-use crate::models::{AiConversation, AiMessage, AiModel, AiModelInput};
+use crate::models::{
+    AiConversation, AiMessage, AiModel, AiModelInput, PlanTodayRequest, PlanTodayResponse,
+};
 use crate::services::ai::AiService;
 use crate::state::AppState;
 
@@ -251,4 +253,21 @@ pub fn cancel_ai_write_assist(
         let _ = tx.send(true);
     }
     Ok(())
+}
+
+// ─── T-005 AI 规划今日待办 Commands ────────────
+
+/// AI 规划今日待办
+///
+/// 聚合昨日/今日 daily 笔记 + 昨日未完成任务 + 今日已有任务 + 用户目标 → 喂 AI
+/// → 返回 3~7 条建议（未写入）。前端展示后用户勾选/编辑才通过 `create_task` 落库。
+///
+/// 非流式：`response_format: json_object` 要完整响应；典型耗时 5~15 秒。
+#[tauri::command]
+pub async fn ai_plan_today(
+    state: State<'_, AppState>,
+    request: PlanTodayRequest,
+) -> Result<PlanTodayResponse, String> {
+    let db = &state.db;
+    AiService::plan_today(db, request).await.map_err(|e| e.to_string())
 }

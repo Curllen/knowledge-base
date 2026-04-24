@@ -250,6 +250,7 @@ pub fn run() {
             commands::ai::cancel_ai_generation,
             commands::ai::ai_write_assist,
             commands::ai::cancel_ai_write_assist,
+            commands::ai::ai_plan_today,
             // 提示词库模块
             commands::prompt::list_prompts,
             commands::prompt::get_prompt,

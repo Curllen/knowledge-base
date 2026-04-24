@@ -639,6 +639,52 @@ pub struct SkillCall {
     pub status: String,
 }
 
+// ─── AI 规划今日待办（T-005） ──────────────
+
+/// 前端发起"AI 规划今日"的入参
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTodayRequest {
+    /// 用户输入的"今日目标"（可选），AI 会据此定向推荐
+    pub goal: Option<String>,
+    /// 是否把"昨日未完成 + 过期未完成"顺延进来；默认 true
+    #[serde(default = "default_true")]
+    pub include_yesterday_unfinished: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// AI 对一条待办的建议（未真正写入数据库）
+///
+/// 前端把这些建议展示在 Modal 表格，用户可编辑/勾选后调用现有 `taskApi.create`
+/// 批量写入 tasks 表。与 `CreateTaskInput` 刻意保持字段兼容，方便前端直接映射。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSuggestion {
+    pub title: String,
+    /// 0=紧急重要，1=普通，2=低；默认 1
+    #[serde(default)]
+    pub priority: Option<i32>,
+    /// 艾森豪威尔重要性维度
+    #[serde(default)]
+    pub important: Option<bool>,
+    /// 截止日期 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'，一般是今天
+    pub due_date: Option<String>,
+    /// AI 给出的推荐理由（可选，用于 UI 折叠展示）
+    pub reason: Option<String>,
+}
+
+/// AI 规划今日的返回结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTodayResponse {
+    pub tasks: Vec<TaskSuggestion>,
+    /// 一句总结 AI 对今日安排的思路；可选
+    pub summary: Option<String>,
+}
+
 /// 创建提示词模板的入参
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

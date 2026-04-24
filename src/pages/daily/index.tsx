@@ -15,11 +15,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Save,
+  Sparkles,
 } from "lucide-react";
 import { dailyApi, noteApi } from "@/lib/api";
 import { TiptapEditor } from "@/components/editor";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useAppStore } from "@/store";
+import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
 import type { Note } from "@/types";
 
 const { Text } = Typography;
@@ -65,6 +67,7 @@ export default function DailyPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showPlanModal, setShowPlanModal] = useState(false);
 
   const isToday = date === todayStr();
 
@@ -212,6 +215,15 @@ export default function DailyPage() {
           {renderStatus()}
         </Space>
         <Space align="center">
+          {isToday && (
+            <Button
+              icon={<Sparkles size={14} />}
+              onClick={() => setShowPlanModal(true)}
+              title="AI 根据今日/昨日笔记 + 待办，给出 3~7 条今日建议"
+            >
+              AI 规划今日
+            </Button>
+          )}
           <Button
             type="primary"
             icon={<Save size={16} />}
@@ -225,6 +237,15 @@ export default function DailyPage() {
           </Button>
         </Space>
       </div>
+
+      <PlanTodayModal
+        open={showPlanModal}
+        onClose={() => setShowPlanModal(false)}
+        onSaved={() => {
+          // 有了新待办，刷一下侧边栏紧急待办计数
+          useAppStore.getState().refreshTaskStats();
+        }}
+      />
 
       {/* 可滚动的编辑主体 */}
       <div className="editor-body">
