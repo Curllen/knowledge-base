@@ -4,6 +4,7 @@ import { Input, Typography, Empty, Spin } from "antd";
 import { Search as SearchIcon, FileText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { searchApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { SearchResult } from "@/types";
 
 const { Text } = Typography;
@@ -19,7 +20,6 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const initializedRef = useRef(false);
   // 虚拟滚动容器（仅在结果数较多时启用）
   const scrollParentRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -29,16 +29,15 @@ export default function SearchPage() {
     overscan: 6,
   });
 
-  // 从 URL 参数 ?q= 初始化搜索
+  // URL ?q= 驱动搜索：外部（SearchPanel 点历史 / 直达链接）改变 URL 时
+  // 同步输入框并触发重搜；用户在输入框 typing 走下方本地 debounce，不走这里
+  const urlQ = (searchParams.get("q") ?? "").trim();
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    const q = searchParams.get("q");
-    if (q && q.trim()) {
-      setQuery(q.trim());
-      doSearch(q.trim());
-    }
-  }, [searchParams]);
+    if (!urlQ) return;
+    setQuery(urlQ);
+    doSearch(urlQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQ]);
 
   async function doSearch(keyword: string) {
     setLoading(true);
@@ -46,6 +45,8 @@ export default function SearchPage() {
     try {
       const data = await searchApi.search(keyword);
       setResults(data);
+      // 搜索成功入历史（SearchPanel 会读取这个列表）
+      useAppStore.getState().pushRecentSearch(keyword);
     } catch (e) {
       console.error("搜索失败:", e);
     } finally {

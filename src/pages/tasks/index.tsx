@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Input,
   Button,
@@ -132,14 +132,63 @@ function describeDueDate(due: string | null): { text: string; overdue: boolean }
   return { text: `${dueDay}（${diff} 天后）${timeSuffix}`, overdue: false };
 }
 
+/** SidePanel 的 TasksPanel 和主区共享的筛选键 */
+type SmartFilter = "todo" | "done" | "all" | "overdue" | "today" | "urgent";
+
+/** URL `?filter=` → 传给 taskApi.list 的 status 参数 */
+function filterToStatusArg(filter: SmartFilter): 0 | 1 | undefined {
+  if (filter === "done") return 1;
+  if (filter === "all") return undefined;
+  // todo / overdue / today / urgent 都只看未完成
+  return 0;
+}
+
+/** 本地再过滤：基于 URL 的智能筛选，对 taskApi 返回的 Task[] 二次过滤 */
+function applySmartFilter(tasks: Task[], filter: SmartFilter): Task[] {
+  const today = ymdLocal(new Date());
+  const weekEnd = ymdLocal(new Date(Date.now() + 7 * 86400000));
+  switch (filter) {
+    case "overdue":
+      return tasks.filter(
+        (t) => t.due_date && dueDateOnly(t.due_date) < today,
+      );
+    case "today":
+      return tasks.filter(
+        (t) => t.due_date && dueDateOnly(t.due_date) === today,
+      );
+    case "urgent":
+      return tasks.filter((t) => t.priority === 0);
+    default:
+      return tasks;
+  }
+  // weekEnd 暂未直接对应单独的 filter，但保留实现基础供后续"本周"扩展
+  void weekEnd;
+}
+
+/** 动态标题：和 SidePanel 选中项呼应，给用户"看的是什么"的反馈 */
+function filterTitle(filter: SmartFilter): string {
+  switch (filter) {
+    case "done": return "已完成";
+    case "all": return "全部任务";
+    case "overdue": return "逾期任务";
+    case "today": return "今天的任务";
+    case "urgent": return "紧急任务";
+    default: return "待办";
+  }
+}
+
 export default function TasksPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
+
+  // URL 是筛选真相源
+  const filter = ((searchParams.get("filter") ?? "todo") as SmartFilter);
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"todo" | "done" | "all">("todo");
   const [createOpen, setCreateOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
@@ -147,23 +196,35 @@ export default function TasksPage() {
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
   const [presetDueDate, setPresetDueDate] = useState<string | undefined>(undefined);
 
+  // SidePanel 传 ?new=1 唤起新建 Modal（一次性，消费后清掉参数）
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setPresetPriority(undefined);
+      setPresetDueDate(undefined);
+      setCreateOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("new");
+      navigate(`/tasks${next.toString() ? `?${next.toString()}` : ""}`, {
+        replace: true,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
-      // 看板 / 日历视图只展示未完成；列表视图按用户选的 status 过滤
+      // 看板 / 日历视图只展示未完成；列表视图按 URL filter 的 status 维度过滤
       const statusArg =
         viewMode === "kanban" || viewMode === "calendar"
           ? 0
-          : statusFilter === "all"
-            ? undefined
-            : statusFilter === "todo"
-              ? 0
-              : 1;
+          : filterToStatusArg(filter);
       const list = await taskApi.list({
         status: statusArg,
         keyword: keyword.trim() || undefined,
       });
-      setTasks(list);
+      // overdue / today / urgent 这些维度后端暂未支持参数，前端二次过滤
+      setTasks(applySmartFilter(list, filter));
       // 每次重拉任务列表时，顺带刷新侧边栏紧急任务数
       useAppStore.getState().refreshTaskStats();
     } catch (e) {
@@ -171,7 +232,7 @@ export default function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [viewMode, statusFilter, keyword, message]);
+  }, [viewMode, filter, keyword, message]);
 
   useEffect(() => {
     loadTasks();
@@ -217,12 +278,12 @@ export default function TasksPage() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* 标题栏 */}
+      {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建 */}
       <div className="flex items-end justify-between mb-4">
         <div>
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <CheckSquare size={20} style={{ color: token.colorPrimary }} />
-            待办
+            {filterTitle(filter)}
           </h1>
           <Text type="secondary" className="text-xs">
             {tasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
@@ -242,18 +303,6 @@ export default function TasksPage() {
               { label: "日历", value: "calendar" },
             ]}
           />
-          {viewMode === "list" && (
-            <Segmented
-              size="small"
-              value={statusFilter}
-              onChange={(v) => setStatusFilter(v as "todo" | "done" | "all")}
-              options={[
-                { label: "进行中", value: "todo" },
-                { label: "已完成", value: "done" },
-                { label: "全部", value: "all" },
-              ]}
-            />
-          )}
           <Button
             icon={<Sparkles size={14} />}
             onClick={() => setShowPlanModal(true)}
@@ -313,9 +362,15 @@ export default function TasksPage() {
       ) : tasks.length === 0 ? (
         <Empty
           description={
-            statusFilter === "done"
+            filter === "done"
               ? "暂无已完成任务"
-              : "还没有任务，点右上「新建任务」开始吧"
+              : filter === "overdue"
+                ? "太棒了，没有逾期任务 ✨"
+                : filter === "today"
+                  ? "今天没有到期的任务"
+                  : filter === "urgent"
+                    ? "没有紧急任务"
+                    : "还没有任务，点右上「新建任务」开始吧"
           }
         />
       ) : (

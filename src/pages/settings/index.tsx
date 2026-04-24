@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   Typography,
@@ -17,6 +17,7 @@ import {
   Alert,
   List,
   Switch,
+  Radio,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
 import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink } from "lucide-react";
@@ -27,7 +28,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput, OrphanImageScan } from "@/types";
+import type { AiModel, AiModelInput, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput, OrphanImageScan } from "@/types";
 import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, imageMaintApi, autostartApi, configApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
@@ -156,6 +157,19 @@ export default function SettingsPage() {
   const [scanRootPath, setScanRootPath] = useState<string | null>(null);
   /** 是否在目标下多套一层"源根目录名"作为导入批次根 */
   const [preserveRoot, setPreserveRoot] = useState(true);
+  /** 冲突策略：默认跳过已导入过的文件；用户可切到"创建副本" */
+  const [conflictPolicy, setConflictPolicy] = useState<ImportConflictPolicy>("skip");
+
+  /** 扫描结果三桶统计（展示给用户看哪些是已有的） */
+  const matchStats = useMemo(() => {
+    let news = 0, paths = 0, fuzzies = 0;
+    for (const f of scannedFiles) {
+      if (f.match_kind === "path") paths++;
+      else if (f.match_kind === "fuzzy") fuzzies++;
+      else news++;
+    }
+    return { news, paths, fuzzies, conflicts: paths + fuzzies };
+  }, [scannedFiles]);
 
   // 导出状态
   const [exporting, setExporting] = useState(false);
@@ -521,10 +535,15 @@ export default function SettingsPage() {
         importFolderId ?? null,
         scanRootPath,
         preserveRoot,
+        conflictPolicy,
       );
       setImportResult(result);
-      if (result.imported > 0) {
-        message.success(`成功导入 ${result.imported} 篇笔记`);
+      if (result.imported > 0 || result.duplicated > 0) {
+        const parts: string[] = [];
+        if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
+        if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
+        if (result.skipped > 0) parts.push(`跳过 ${result.skipped} 篇`);
+        message.success(parts.join("，"));
         // 触发左侧笔记树 + 文件夹树刷新（导入过程会按层级新建文件夹）
         useAppStore.getState().bumpNotesRefresh();
         useAppStore.getState().bumpFoldersRefresh();
@@ -1268,6 +1287,35 @@ export default function SettingsPage() {
             已选 {selectedPaths.size} / {scannedFiles.length}
           </Text>
         </div>
+        {/* 分桶统计 + 冲突策略 */}
+        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2" style={{ fontSize: 12 }}>
+            <span>
+              🆕 全新 <strong>{matchStats.news}</strong>
+            </span>
+            <span title="路径已匹配到已有笔记（上次导入过）">
+              🔁 已导入过 <strong>{matchStats.paths}</strong>
+            </span>
+            <span title="路径不同但标题+内容与已有笔记一致，可能是用户搬动过文件">
+              ⚠️ 可能重复 <strong>{matchStats.fuzzies}</strong>
+            </span>
+          </div>
+          {matchStats.conflicts > 0 && (
+            <div>
+              <Text style={{ fontSize: 12 }}>遇到已存在的文件：</Text>
+              <Radio.Group
+                value={conflictPolicy}
+                onChange={(e) => setConflictPolicy(e.target.value as ImportConflictPolicy)}
+                size="small"
+                style={{ marginLeft: 8 }}
+              >
+                <Radio value="skip">跳过（推荐）</Radio>
+                <Radio value="duplicate">创建副本</Radio>
+              </Radio.Group>
+            </div>
+          )}
+        </div>
+
         {/* 保留目录层级选项 */}
         <div className="mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
           <Checkbox

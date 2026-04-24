@@ -26,10 +26,11 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOutlined } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
-import { folderApi, importApi } from "@/lib/api";
-import type { Folder } from "@/types";
+import { folderApi, importApi, noteApi } from "@/lib/api";
+import type { Folder, ScannedFile } from "@/types";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
+import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 
 /**
  * NotesPanel —— Activity Bar 模式下"笔记"视图的主面板内容。
@@ -157,6 +158,16 @@ export function NotesPanel() {
     x: number;
     y: number;
     ts: number;
+  } | null>(null);
+
+  /** OS 文件拖拽到面板时的高亮态（只对包含 Files 的 dataTransfer 生效，不干扰 Tree 内部拖拽） */
+  const [fileDragOver, setFileDragOver] = useState(false);
+
+  // 扫描文件夹导入的预览弹窗状态
+  const [importPreview, setImportPreview] = useState<{
+    files: ScannedFile[];
+    rootPath: string;
+    folderId: number;
   } | null>(null);
 
   // Dropdown trigger=[] 不会自己处理外部点击关闭，手动挂全局监听
@@ -360,6 +371,9 @@ export function NotesPanel() {
   };
 
   async function handleDrop(info: DropInfo) {
+    // 防御：OS 文件拖入时 antd Tree 的 onDrop 理论上不会触发（内部无 dragNode），
+    // 但不同版本行为有差异，保底校验避免 undefined.key 抛错
+    if (!info.dragNode || info.dragNode.key == null) return;
     const dragKey = String(info.dragNode.key);
     const dropKey = String(info.node.key);
     if (dragKey.startsWith(NEW_NODE_PREFIX) || dropKey.startsWith(NEW_NODE_PREFIX)) return;
@@ -556,7 +570,7 @@ export function NotesPanel() {
       if (!picked || Array.isArray(picked)) return;
       const rootPath = picked;
       const hide = message.loading("扫描中…", 0);
-      let files;
+      let files: ScannedFile[];
       try {
         files = await importApi.scan(rootPath);
       } catch (e) {
@@ -569,60 +583,115 @@ export function NotesPanel() {
         message.info("该文件夹下没有 .md 文件");
         return;
       }
-      const subdirCount = new Set(
-        files.map((f) => f.relative_dir).filter(Boolean),
-      ).size;
-      const rootName =
-        rootPath.split(/[\\/]/).filter(Boolean).pop() ?? "导入";
-      Modal.confirm({
-        title: "确认导入",
-        content: (
-          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-            扫描到 <strong>{files.length}</strong> 个 .md 文件
-            {subdirCount > 0 && `，分布在 ${subdirCount} 个子目录中`}。
-            <br />
-            将保留源目录层级，并在当前文件夹下创建
-            <strong style={{ margin: "0 4px" }}>{rootName}</strong>
-            作为根文件夹。
-          </div>
-        ),
-        okText: "开始导入",
-        cancelText: "取消",
-        async onOk() {
-          const paths = files!.map((f) => f.path);
-          const hide2 = message.loading(
-            `正在导入 ${paths.length} 个文件…`,
-            0,
-          );
-          try {
-            const result = await importApi.importSelected(
-              paths,
-              folderId,
-              rootPath,
-              true,
-            );
-            hide2();
-            if (result.imported > 0) {
-              message.success(
-                `已导入 ${result.imported} 篇到此文件夹，保留层级`,
-              );
-            }
-            if (result.errors.length > 0) {
-              message.warning(
-                `${result.errors.length} 个文件失败，详见控制台`,
-              );
-              console.warn("[import] 失败明细:", result.errors);
-            }
-            useAppStore.getState().bumpNotesRefresh();
-            useAppStore.getState().bumpFoldersRefresh();
-          } catch (e) {
-            hide2();
-            message.error(`导入失败: ${e}`);
-          }
-        },
-      });
+      setImportPreview({ files, rootPath, folderId });
     } catch (e) {
       message.error(`选择目录失败: ${e}`);
+    }
+  }
+
+  // ─── OS 文件拖入新建笔记 ───────────────────
+
+  /** 识别 .md/.markdown/.txt 文本文件（按扩展名；MIME 在 Windows 上常为空） */
+  function isDroppedTextFile(f: File): boolean {
+    const dot = f.name.lastIndexOf(".");
+    if (dot < 0) return false;
+    const ext = f.name.slice(dot + 1).toLowerCase();
+    return ext === "md" || ext === "markdown" || ext === "txt";
+  }
+
+  /** 只有 OS 文件拖入（dataTransfer.types 含 "Files"）才视为新建笔记场景，避免干扰 Tree 内部节点拖动 */
+  function hasOsFiles(dt: DataTransfer): boolean {
+    // dataTransfer.types 在 DOMStringList / ReadonlyArray 两种实现间兼容，统一转数组再判断
+    for (let i = 0; i < dt.types.length; i++) {
+      if (dt.types[i] === "Files") return true;
+    }
+    return false;
+  }
+
+  /**
+   * 尝试从 File 对象上读非标准的 `path` 属性（Tauri 2 + WebView2 在 dragDropEnabled=false
+   * 时会把 OS 绝对路径挂上来）。返回值为 null 表示至少一个文件没拿到路径。
+   *
+   * Why: 能拿到路径就能走 `importApi.importSelected` 全流程（去重 / source_file_path /
+   *      副本策略等），比"读内容 + noteApi.create"信息量大一个维度。
+   */
+  function collectOsPaths(files: File[]): string[] | null {
+    const paths: string[] = [];
+    for (const f of files) {
+      const p = (f as File & { path?: string }).path;
+      if (!p) return null;
+      paths.push(p);
+    }
+    return paths;
+  }
+
+  /**
+   * 把拖入的文件各自建成笔记。优先走 importApi.importSelected（能拿到 OS 路径时，
+   * 享受去重/副本/source_file 追踪）；否则回退到前端 File.text() + noteApi.create。
+   */
+  async function handleOsFilesDropped(files: File[]) {
+    const texts = files.filter(isDroppedTextFile);
+    const skipped = files.length - texts.length;
+    if (texts.length === 0) {
+      message.warning("仅支持 .md / .txt 拖入新建笔记（附件拖放请拖到编辑器内）");
+      return;
+    }
+
+    // ── 快路径：能拿到 OS 路径则走 importApi（仅对 .md/.markdown，.txt 走慢路径） ──
+    const mdOnly = texts.filter((f) => {
+      const ext = f.name.slice(f.name.lastIndexOf(".") + 1).toLowerCase();
+      return ext === "md" || ext === "markdown";
+    });
+    const paths = mdOnly.length === texts.length ? collectOsPaths(texts) : null;
+    if (paths && paths.length > 0) {
+      const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
+      try {
+        const result = await importApi.importSelected(paths, null);
+        hide();
+        const parts: string[] = [];
+        if (result.imported > 0) parts.push(`新建 ${result.imported}`);
+        if (result.duplicated > 0) parts.push(`副本 ${result.duplicated}`);
+        if (result.skipped > 0) parts.push(`跳过 ${result.skipped}`);
+        message.success(parts.length ? `导入完成：${parts.join("，")}` : "无新增");
+        if (result.errors.length > 0) {
+          console.warn("[notes-panel drop] 导入失败:", result.errors);
+          message.warning(`${result.errors.length} 个文件失败`);
+        }
+        useAppStore.getState().bumpNotesRefresh();
+        useAppStore.getState().bumpFoldersRefresh();
+      } catch (e) {
+        hide();
+        message.error(`导入失败: ${e}`);
+      }
+      return;
+    }
+
+    // ── 慢路径：File.text() + noteApi.create（含 .txt / 路径不可用场景） ──
+    let lastId: number | null = null;
+    let ok = 0;
+    const errors: string[] = [];
+    for (const f of texts) {
+      try {
+        const content = await f.text();
+        const title = f.name.replace(/\.(md|markdown|txt)$/i, "").trim() || "未命名";
+        const note = await noteApi.create({ title, content, folder_id: null });
+        lastId = note.id;
+        ok++;
+      } catch (e) {
+        errors.push(`${f.name}: ${e}`);
+      }
+    }
+    if (ok > 0) {
+      message.success(
+        `已新建 ${ok} 篇笔记${skipped > 0 ? `（忽略 ${skipped} 个非文本文件）` : ""}`,
+      );
+      useAppStore.getState().bumpNotesRefresh();
+      useAppStore.getState().bumpFoldersRefresh();
+      if (lastId) navigate(`/notes/${lastId}`);
+    }
+    if (errors.length > 0) {
+      console.warn("[notes-panel drop] 导入失败:", errors);
+      message.warning(`${errors.length} 个文件失败`);
     }
   }
 
@@ -748,8 +817,53 @@ export function NotesPanel() {
         />
       </div>
 
-      {/* 文件夹小节 */}
-      <div className="flex-1 overflow-auto" style={{ minHeight: 0, paddingTop: 4 }}>
+      {/* 文件夹小节 —— 兼任 OS 文件拖入区（.md/.txt → 新建笔记） */}
+      <div
+        className="flex-1 overflow-auto"
+        style={{
+          minHeight: 0,
+          paddingTop: 4,
+          outline: fileDragOver
+            ? `2px dashed ${token.colorPrimary}`
+            : "none",
+          outlineOffset: -2,
+          transition: "outline 0.15s",
+        }}
+        onDragOver={(e) => {
+          if (!hasOsFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          if (!fileDragOver) setFileDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          // 仅当离开到本容器外时清理，避免在子元素间移动时闪烁
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setFileDragOver(false);
+        }}
+        onDrop={(e) => {
+          setFileDragOver(false);
+          if (!hasOsFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          e.stopPropagation();
+
+          // 同步检查 —— DataTransfer 在 await 之后就失效，必须在这里拿到 items
+          // 目的：文件夹拖入在 WebView 里拿不到 OS 路径（items 的 FileSystemDirectoryEntry
+          // 只给 fullPath 相对值），引导用户改走右键菜单那条已工作的路径
+          const hasDirectory = Array.from(e.dataTransfer.items ?? []).some((it) => {
+            if (it.kind !== "file") return false;
+            const entry = it.webkitGetAsEntry?.();
+            return entry?.isDirectory === true;
+          });
+          if (hasDirectory) {
+            message.info("拖文件夹请改用右键菜单『导入 Markdown 文件夹…』（能保留目录层级 + 扫描去重）");
+            return;
+          }
+
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length === 0) return;
+          void handleOsFilesDropped(files);
+        }}
+      >
         <div
           className="flex items-center justify-between cursor-pointer select-none"
           style={{
@@ -875,6 +989,49 @@ export function NotesPanel() {
             }}
           />
         </Dropdown>
+      )}
+
+      {/* 扫描文件夹 → 预览 → 导入 */}
+      {importPreview && (
+        <ImportPreviewModal
+          open
+          files={importPreview.files}
+          rootPath={importPreview.rootPath}
+          defaultPreserveRoot
+          onCancel={() => setImportPreview(null)}
+          onConfirm={async ({ policy, preserveRoot }) => {
+            const { files, rootPath, folderId } = importPreview;
+            setImportPreview(null);
+            const paths = files.map((f) => f.path);
+            const hide = message.loading(`正在导入 ${paths.length} 个文件…`, 0);
+            try {
+              const result = await importApi.importSelected(
+                paths,
+                folderId,
+                rootPath,
+                preserveRoot,
+                policy,
+              );
+              hide();
+              const parts: string[] = [];
+              if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
+              if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
+              if (result.skipped > 0) parts.push(`跳过 ${result.skipped} 篇`);
+              if (parts.length > 0) message.success(parts.join("，"));
+              if (result.errors.length > 0) {
+                message.warning(
+                  `${result.errors.length} 个文件失败，详见控制台`,
+                );
+                console.warn("[import] 失败明细:", result.errors);
+              }
+              useAppStore.getState().bumpNotesRefresh();
+              useAppStore.getState().bumpFoldersRefresh();
+            } catch (e) {
+              hide();
+              message.error(`导入失败: ${e}`);
+            }
+          }}
+        />
       )}
     </div>
   );

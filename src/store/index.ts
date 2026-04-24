@@ -28,6 +28,9 @@ export const SIDE_PANEL_MIN_WIDTH = 200;
 export const SIDE_PANEL_MAX_WIDTH = 480;
 export const SIDE_PANEL_DEFAULT_WIDTH = 240;
 
+/** 最近搜索历史保留条数 */
+const RECENT_SEARCHES_MAX = 10;
+
 // 开发/生产数据隔离：dev 用 dev-settings.json，prod 用 settings.json
 // 与后端 cfg!(debug_assertions) 加 dev- 前缀对齐；旧文件由后端 migrate_to_dev_prefix 自动迁移
 const STORE_FILE = import.meta.env.DEV ? "dev-settings.json" : "settings.json";
@@ -63,6 +66,8 @@ interface AppStore {
    * VS Code 行为：点击当前高亮图标 = 折叠/展开 SidePanel。
    */
   sidePanelVisible: boolean;
+  /** 搜索视图：最近搜索关键词（最新在前，最多 RECENT_SEARCHES_MAX 条，持久化） */
+  recentSearches: string[];
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -103,6 +108,12 @@ interface AppStore {
   setSidePanelVisible: (visible: boolean) => void;
   /** 切换 SidePanel 可见性（等价于 setSidePanelVisible(!visible)） */
   toggleSidePanel: () => void;
+  /** 推入一条最近搜索（去重、置顶、最多 RECENT_SEARCHES_MAX 条） */
+  pushRecentSearch: (q: string) => void;
+  /** 删除一条最近搜索 */
+  removeRecentSearch: (q: string) => void;
+  /** 清空最近搜索 */
+  clearRecentSearches: () => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -119,6 +130,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeView: "notes",
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
+  recentSearches: [],
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -153,6 +165,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
   setSidePanelVisible: (visible) => set({ sidePanelVisible: visible }),
   toggleSidePanel: () => set((s) => ({ sidePanelVisible: !s.sidePanelVisible })),
+  pushRecentSearch: (q) => {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    set((s) => {
+      const deduped = s.recentSearches.filter((x) => x !== trimmed);
+      return { recentSearches: [trimmed, ...deduped].slice(0, RECENT_SEARCHES_MAX) };
+    });
+  },
+  removeRecentSearch: (q) =>
+    set((s) => ({ recentSearches: s.recentSearches.filter((x) => x !== q) })),
+  clearRecentSearches: () => set({ recentSearches: [] }),
   setAlwaysOnTop: async (enabled, opts) => {
     try {
       await getCurrentWindow().setAlwaysOnTop(enabled);
@@ -198,6 +221,16 @@ export async function loadThemeFromStore() {
     if (typeof spv === "boolean") {
       useAppStore.getState().setSidePanelVisible(spv);
     }
+
+    // 恢复最近搜索
+    const rs = await store.get<string[]>("recentSearches");
+    if (Array.isArray(rs)) {
+      useAppStore.setState({
+        recentSearches: rs
+          .filter((x) => typeof x === "string" && x.trim())
+          .slice(0, RECENT_SEARCHES_MAX),
+      });
+    }
   } catch {
     // 首次启动时 store 可能不存在
   }
@@ -213,6 +246,7 @@ export async function saveThemeToStore() {
       alwaysOnTop,
       sidePanelWidth,
       sidePanelVisible,
+      recentSearches,
     } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
@@ -221,6 +255,7 @@ export async function saveThemeToStore() {
     await store.set("alwaysOnTop", alwaysOnTop);
     await store.set("sidePanelWidth", sidePanelWidth);
     await store.set("sidePanelVisible", sidePanelVisible);
+    await store.set("recentSearches", recentSearches);
     await store.save();
   } catch {
     // 静默失败
@@ -230,7 +265,7 @@ export async function saveThemeToStore() {
 // 监听主题 + 置顶 + SidePanel 偏好变化自动保存
 let _prevPersistKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.recentSearches.join(",")}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
