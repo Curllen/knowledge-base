@@ -153,24 +153,50 @@ impl Database {
     /// 获取默认 AI 模型
     pub fn get_default_ai_model(&self) -> Result<AiModel, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
-        let model = conn.query_row(
+        // 1) 优先查 is_default=1
+        let row_to_model = |row: &rusqlite::Row| {
+            Ok(AiModel {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                provider: row.get(2)?,
+                api_url: row.get(3)?,
+                api_key: row.get(4)?,
+                model_id: row.get(5)?,
+                is_default: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        };
+        let primary = conn.query_row(
             "SELECT id, name, provider, api_url, api_key, model_id, is_default, created_at
              FROM ai_models WHERE is_default = 1 LIMIT 1",
             [],
-            |row| {
-                Ok(AiModel {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    provider: row.get(2)?,
-                    api_url: row.get(3)?,
-                    api_key: row.get(4)?,
-                    model_id: row.get(5)?,
-                    is_default: row.get::<_, i32>(6)? != 0,
-                    created_at: row.get(7)?,
-                })
-            },
-        )?;
-        Ok(model)
+            row_to_model,
+        );
+        if let Ok(m) = primary {
+            return Ok(m);
+        }
+
+        // 2) T-B02 兜底：库里有模型但没有任何默认（历史脏数据 / 多端同步遗留），
+        //    取最早一条做默认 + 顺手 promote 它，避免下次再走兜底
+        let fallback: AiModel = conn
+            .query_row(
+                "SELECT id, name, provider, api_url, api_key, model_id, is_default, created_at
+                 FROM ai_models ORDER BY created_at ASC, id ASC LIMIT 1",
+                [],
+                row_to_model,
+            )
+            .map_err(|_| AppError::NotFound(
+                "尚未配置任何 AI 模型，请到设置页添加".into(),
+            ))?;
+        let _ = conn.execute(
+            "UPDATE ai_models SET is_default = 1 WHERE id = ?1",
+            [fallback.id],
+        );
+        log::info!(
+            "[ai] 库内无默认标记，自动 promote #{} 为默认（兜底 T-B02）",
+            fallback.id
+        );
+        Ok(AiModel { is_default: true, ..fallback })
     }
 
     /// 创建 AI 模型
@@ -188,6 +214,27 @@ impl Database {
             ],
         )?;
         let id = conn.last_insert_rowid();
+
+        // T-B02: 当前没有任何默认模型时（首次新建 / 之前默认的被删了），
+        // 自动把新建的这条设为默认；避免后续 get_default_ai_model 报 NoRows。
+        let has_default: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ai_models WHERE is_default = 1",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+        if !has_default {
+            conn.execute(
+                "UPDATE ai_models SET is_default = 1 WHERE id = ?1",
+                [id],
+            )?;
+            log::info!(
+                "[ai] 库内无默认模型，已自动把新建 #{} 设为默认（修 T-B02）",
+                id
+            );
+        }
+
         drop(conn);
         self.get_ai_model(id)
     }

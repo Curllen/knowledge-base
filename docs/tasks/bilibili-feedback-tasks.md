@@ -369,11 +369,31 @@
 
 #### T-013 · 数据目录可自定义（不强占 C 盘）
 
-- **状态**：`pending`
-- **来源建议**：山下一凡人#100 "数据目录希望可以自定义，c 盘不够大"
-- **价值**：⭐⭐⭐⭐  成本：中
-- **建议方案**：设置页加"数据目录"项 → 用 `dialog` 选目录 → 写到 `tauri-plugin-store` 的 settings.json → 启动时优先读这个路径，缺失再 fallback 到 `app_data_dir()`
-- **风险**：用户切目录后老数据要不要迁？v1 提示"切换后旧数据保留在原位置，请手动复制 .db 与 attachments"，不自动迁
+- **状态**：`completed` ✅（待用户手动验证）  · 完成日期：2026-04-25
+- **来源建议**：山下一凡人#100 "数据目录希望可以自定义，C 盘不够大" / 追新动漫楼中楼"怕重装系统数据全丢"
+- **价值**：⭐⭐⭐⭐  成本：中（实际半天）
+- **方案**：env > 指针文件 > 默认（弃用 tauri-plugin-store 路线，避免启动期插件初始化竞态）
+- **改动**：
+  - 后端 `services/data_dir.rs`（230 行）— `DataDirResolver` 三优先级解析 + atomic write 指针文件 + 5 个单测
+  - 后端 `lib.rs::setup` 接通：`framework_app_data_dir`（OS 给的固定位置，存指针 + 单实例锁 + md deliver）vs `data_dir_root`（用户自定义，存 db + 资产）严格区分
+  - 后端 `commands/data_dir.rs` — 3 个 Command (get_data_dir_info / set_pending / clear_pending)
+  - 前端 `types/index.ts` 加 `ResolvedDataDir` / `DataDirSource`
+  - 前端 `lib/api/index.ts` 加 `dataDirApi`
+  - 前端 `components/settings/DataDirSection.tsx`（260 行）— 当前/默认/待生效路径展示 + 选目录 + Modal 二次确认 + 复制路径 + 恢复默认
+  - `pages/settings/index.tsx` 把 `<DataDirSection />` 挂在 SyncTabs 上方
+- **设计要点**：
+  - 指针文件在 framework app_data_dir（OS 固定位置），用户自定义路径只是被指针指向 → 重启时永远能从固定位置找到指针
+  - 单实例锁刻意留在 framework app_data_dir：换数据目录不应突破单例
+  - md deliver 文件留在 framework app_data_dir：其他进程不知道当前用户配的自定义路径
+  - 多开实例号叠加在用户自定义路径之上（`<custom>/instance-N`）
+  - **重启生效**：set_pending 只写指针，不动当前进程的 db 连接；不自动迁移老数据
+- **测试**：`cargo test services::data_dir` 5/5 通过 + `cargo check` + `npx tsc --noEmit` 全绿
+- **优先级**：env `KB_DATA_DIR` > 指针文件 `data_dir.txt` > 默认 app_data_dir
+- **待用户手动验证**：
+  1. 设置页底部"数据目录"卡片显示当前路径 + 默认路径
+  2. 选 D 盘空目录 → 弹 Modal 二次确认 → 关应用重启
+  3. 重启后空库（指向新目录无 db），用户手动复制 `app.db + kb_assets/` 后再开
+  4. 点"恢复默认" → 重启后回到 C 盘 app_data_dir
 
 ---
 
