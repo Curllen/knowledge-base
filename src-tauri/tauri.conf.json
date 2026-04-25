@@ -13,6 +13,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "知识库",
         "width": 1300,
         "height": 800,
@@ -20,7 +21,8 @@
         "minHeight": 600,
         "center": true,
         "decorations": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "visible": false
       }
     ],
     "security": {

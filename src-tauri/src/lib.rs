@@ -221,6 +221,69 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
     });
 }
 
+/// T-013 完整版：检测到迁移 marker 时，开 splash 窗口跑迁移
+///
+/// 流程：
+/// 1. 创建 `migration-splash` 独立窗口，URL = `index.html#/migration-splash`（同一个 React 包，HashRouter 路由）
+/// 2. 主窗口此时还是 visible:false，splash 是用户唯一可见的窗口
+/// 3. setup 阻塞跑 `run_migration`，进度通过 `data_dir:migrate_progress` emit 到 splash
+/// 4. 迁移完毕 → close splash → setup 继续往下走 → 末尾 show 主窗
+fn run_data_dir_migration_with_splash(
+    app: &tauri::App,
+    framework_app_data_dir: &std::path::Path,
+    marker: &services::data_dir::MigrationMarker,
+) -> Result<(), crate::error::AppError> {
+    use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
+
+    log::info!(
+        "[migration] 检测到 marker: {} → {} (status={:?})",
+        marker.from, marker.to, marker.status
+    );
+
+    // 创建 splash 窗口
+    let splash = WebviewWindowBuilder::new(
+        app,
+        "migration-splash",
+        WebviewUrl::App("index.html#/migration-splash".into()),
+    )
+    .title("正在迁移数据…")
+    .inner_size(560.0, 360.0)
+    .resizable(false)
+    .center()
+    .decorations(false)
+    .always_on_top(true)
+    .visible(true)
+    .build()
+    .map_err(|e| {
+        crate::error::AppError::Custom(format!("splash 窗口创建失败: {}", e))
+    })?;
+
+    // 让 splash 内 JS 有机会订阅事件（首屏 React 渲染 + listen 调用大约 100ms）
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let app_handle = app.handle().clone();
+    let emit_progress = move |p: &services::data_dir::MigrationProgress| {
+        let _ = app_handle.emit_to("migration-splash", "data_dir:migrate_progress", p);
+    };
+
+    let result = services::data_dir::DataDirResolver::run_migration(
+        framework_app_data_dir,
+        marker,
+        &emit_progress,
+    );
+
+    match &result {
+        Ok(_) => log::info!("[migration] 迁移完成"),
+        Err(e) => log::error!("[migration] 迁移失败: {}", e),
+    }
+
+    // 让用户看到"完成"或"失败"画面 1 秒再关
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let _ = splash.close();
+
+    result
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let lock_prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
@@ -264,9 +327,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         // ─── 应用初始化 ─────────────────────────────
         .setup(move |app| {
-            // framework 默认 app_data_dir：单实例锁 + 指针文件 永远在这里，跟用户自定义路径无关
+            // framework 默认 app_data_dir：单实例锁 + 指针文件 + 迁移 marker 永远在这里
             let framework_app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&framework_app_data_dir)?;
+
+            // T-013 完整版：检测迁移 marker → 弹 splash 窗口跑迁移 → close splash
+            // 必须放在 db init 之前（迁移会动 db 文件）
+            if let Ok(Some(marker)) =
+                services::data_dir::DataDirResolver::read_migration_marker(&framework_app_data_dir)
+            {
+                run_data_dir_migration_with_splash(app, &framework_app_data_dir, &marker)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            }
 
             // T-013: 解析最终数据根目录（env > 指针文件 > 默认）
             // 注意 dev 模式旧数据迁移、单实例锁仍在 framework_app_data_dir 上做
@@ -421,6 +493,24 @@ pub fn run() {
                 services::task_reminder::run_reminder_loop(app_handle_reminder).await;
             });
 
+            // 主窗口 visible:false 默认，setup 完成后显示（迁移期间会被 splash 顶住）
+            // 注意：autostart 的 --start-minimized 处理已经按需 hide 了；这里只 show 一次
+            let did_start_minimized = std::env::args().any(|a| a == "--start-minimized")
+                && app
+                    .state::<AppState>()
+                    .db
+                    .get_config("start_minimized")
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some("1");
+            if !did_start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+
             Ok(())
         })
         // ─── Command 注册 ───────────────────────────
@@ -460,6 +550,9 @@ pub fn run() {
             commands::data_dir::get_data_dir_info,
             commands::data_dir::set_pending_data_dir,
             commands::data_dir::clear_pending_data_dir,
+            commands::data_dir::set_pending_data_dir_with_migration,
+            commands::data_dir::cancel_pending_migration,
+            commands::data_dir::get_migration_marker,
             // T-024 同步 V1（多端真同步 + 多 backend）
             commands::sync_v1::sync_v1_list_backends,
             commands::sync_v1::sync_v1_get_backend,

@@ -62,6 +62,7 @@ import type {
   SyncPushResult,
   SyncPullResult,
   ResolvedDataDir,
+  MigrationMarker,
 } from "@/types";
 
 /** 系统相关 API */
@@ -523,6 +524,14 @@ export const dataDirApi = {
   setPending: (newPath: string) =>
     invoke<void>("set_pending_data_dir", { newPath }),
   clearPending: () => invoke<void>("clear_pending_data_dir"),
+  /** T-013 完整版：写指针 + 写迁移 marker */
+  setPendingWithMigration: (newPath: string) =>
+    invoke<void>("set_pending_data_dir_with_migration", { newPath }),
+  /** 取消未执行的迁移 */
+  cancelPendingMigration: () => invoke<void>("cancel_pending_migration"),
+  /** 读迁移 marker（splash 窗口启动时查初始状态用）*/
+  getMigrationMarker: () =>
+    invoke<MigrationMarker | null>("get_migration_marker"),
 };
 
 /** 待办任务 API */

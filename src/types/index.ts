@@ -725,3 +725,29 @@ export interface ResolvedDataDir {
   /** 指针文件里写的路径（可能与 current 不一致：env 临时覆盖时；为 null 表示无指针） */
   pendingDir: string | null;
 }
+
+/** 迁移 marker 状态 */
+export type MigrationStatus = "pending" | "in_progress" | "crashed" | "done";
+
+/** 迁移 marker（启动期检测） */
+export interface MigrationMarker {
+  from: string;
+  to: string;
+  status: MigrationStatus;
+  /** rust 是 snake_case，serde 默认序列化保持 snake；这里用相同字段名 */
+  started_at: string;
+  updated_at: string;
+  completed_items: string[];
+}
+
+/** 迁移进度事件（splash 窗口监听用）*/
+export interface MigrationProgress {
+  /** "scan" | "copy_file" | "copy_dir" | "verify" | "done" | "error" */
+  phase: string;
+  currentFile: string;
+  itemIndex: number;
+  itemTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+  message: string;
+}

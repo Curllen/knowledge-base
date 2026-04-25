@@ -16,6 +16,7 @@ import {
   Card,
   Modal,
   Popconfirm,
+  Radio,
   Space,
   Tag,
   Typography,
@@ -27,12 +28,13 @@ import {
   RotateCcw,
   AlertTriangle,
   Copy,
+  Sparkles,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { dataDirApi } from "@/lib/api";
 import type { DataDirSource, ResolvedDataDir } from "@/types";
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 const SOURCE_LABEL: Record<DataDirSource, { label: string; color: string }> = {
   env: { label: "环境变量", color: "purple" },
@@ -46,6 +48,8 @@ export function DataDirSection() {
   const [info, setInfo] = useState<ResolvedDataDir | null>(null);
   const [loading, setLoading] = useState(false);
   const [restartHint, setRestartHint] = useState<string | null>(null);
+  const [pickedPath, setPickedPath] = useState<string | null>(null);
+  const [migrateChoice, setMigrateChoice] = useState<"auto" | "manual">("auto");
 
   useEffect(() => {
     void load();
@@ -75,68 +79,30 @@ export function DataDirSection() {
       return;
     }
 
-    Modal.confirm({
-      title: "修改数据目录",
-      width: 580,
-      icon: <AlertTriangle size={20} style={{ color: token.colorWarning }} />,
-      content: (
-        <div className="text-sm leading-6">
-          <Paragraph>
-            将把数据根设为：<Text code>{sel}</Text>
-          </Paragraph>
-          <Alert
-            type="warning"
-            showIcon
-            className="mt-2"
-            message="重要：本操作只写一个指针文件，重启后生效"
-            description={
-              <div>
-                <div>
-                  <Text strong>不会自动迁移老数据</Text>
-                  。如果你已有笔记，重启后看到的是空库（指向新目录里没有 db）。
-                </div>
-                <div className="mt-2">建议步骤：</div>
-                <ol className="pl-5 mt-1" style={{ fontSize: 13 }}>
-                  <li>
-                    手动复制 <Text code>app.db</Text>{" "}
-                    + 资产目录（<Text code>kb_assets/</Text>{" "}
-                    <Text code>attachments/</Text>{" "}
-                    <Text code>pdfs/</Text>{" "}
-                    <Text code>sources/</Text>）
-                    <br />从 <Text code>{info?.currentDir}</Text>
-                    <br />到 <Text code>{sel}</Text>
-                  </li>
-                  <li>关闭应用</li>
-                  <li>重新启动 → 用新路径</li>
-                </ol>
-                <Alert
-                  type="info"
-                  showIcon={false}
-                  className="mt-2"
-                  message={
-                    <span style={{ fontSize: 12 }}>
-                      💡 想反悔？随时点"恢复默认"清除指针，重启后回到默认路径。
-                    </span>
-                  }
-                />
-              </div>
-            }
-          />
-        </div>
-      ),
-      okText: "确认修改（写入指针文件）",
-      cancelText: "取消",
-      onOk: async () => {
-        try {
-          await dataDirApi.setPending(sel);
-          message.success("已记录新数据目录，关闭应用后重启生效");
-          setRestartHint(sel);
-          await load();
-        } catch (e) {
-          message.error(`保存失败: ${e}`);
-        }
-      },
-    });
+    setPickedPath(sel);
+    setMigrateChoice("auto");
+  }
+
+  async function handleConfirmMove() {
+    if (!pickedPath) return;
+    try {
+      if (migrateChoice === "auto") {
+        await dataDirApi.setPendingWithMigration(pickedPath);
+        message.success(
+          "已写入指针 + 迁移 marker；关闭应用后重启，启动时会自动迁移",
+        );
+      } else {
+        await dataDirApi.setPending(pickedPath);
+        message.success(
+          "已写入指针；关闭应用后请手动复制 app.db + 资产到新目录，再重启",
+        );
+      }
+      setRestartHint(pickedPath);
+      setPickedPath(null);
+      await load();
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
   }
 
   async function handleClear() {
@@ -267,6 +233,104 @@ export function DataDirSection() {
           </Space>
         </div>
       )}
+
+      {/* 修改数据目录确认 Modal — 在 Modal 内部让用户选迁移策略 */}
+      <Modal
+        title={
+          <span className="flex items-center gap-2">
+            <AlertTriangle size={18} style={{ color: token.colorWarning }} />
+            修改数据目录
+          </span>
+        }
+        open={pickedPath != null}
+        onOk={handleConfirmMove}
+        onCancel={() => setPickedPath(null)}
+        okText={
+          migrateChoice === "auto" ? "保存（重启时自动迁移）" : "保存（手动迁移）"
+        }
+        cancelText="取消"
+        width={600}
+        destroyOnClose
+      >
+        {pickedPath && info && (
+          <div className="text-sm leading-6">
+            <div className="mb-2">
+              <Text type="secondary">从：</Text>
+              <Text code>{info.currentDir}</Text>
+            </div>
+            <div className="mb-3">
+              <Text type="secondary">到：</Text>
+              <Text code>{pickedPath}</Text>
+            </div>
+
+            <Radio.Group
+              value={migrateChoice}
+              onChange={(e) => setMigrateChoice(e.target.value)}
+              className="w-full"
+            >
+              <Space direction="vertical" className="w-full">
+                <Radio value="auto">
+                  <Space className="ml-1">
+                    <Sparkles size={14} style={{ color: token.colorPrimary }} />
+                    <span>
+                      <Text strong>自动迁移（推荐）</Text>
+                      <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
+                        重启时弹独立窗口跑迁移，进度可见，旧目录保留作备份
+                      </span>
+                    </span>
+                  </Space>
+                </Radio>
+                <Radio value="manual">
+                  <span className="ml-1">
+                    <Text strong>不迁移，我自己复制</Text>
+                    <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
+                      重启后空库，需手动复制
+                      <Text code style={{ fontSize: 11 }}>
+                        app.db
+                      </Text>{" "}
+                      + 资产目录
+                    </span>
+                  </span>
+                </Radio>
+              </Space>
+            </Radio.Group>
+
+            {migrateChoice === "auto" ? (
+              <Alert
+                type="info"
+                showIcon
+                className="mt-3"
+                message="迁移过程"
+                description={
+                  <ol className="pl-4 my-0" style={{ fontSize: 12, lineHeight: 1.7 }}>
+                    <li>关闭应用</li>
+                    <li>重启 → 启动早期弹一个 splash 窗口显示迁移进度</li>
+                    <li>迁移完成（同盘几乎瞬间，跨盘按附件大小耗时）→ 主窗口自动打开</li>
+                    <li>旧目录会保留并写入 <Text code style={{ fontSize: 11 }}>_MIGRATED_README.txt</Text>，确认数据 OK 后可手动删除</li>
+                  </ol>
+                }
+              />
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                className="mt-3"
+                message="手动迁移注意"
+                description={
+                  <span style={{ fontSize: 12 }}>
+                    需要复制：
+                    <Text code style={{ fontSize: 11 }}>app.db</Text>{" "}
+                    <Text code style={{ fontSize: 11 }}>kb_assets/</Text>{" "}
+                    <Text code style={{ fontSize: 11 }}>attachments/</Text>{" "}
+                    <Text code style={{ fontSize: 11 }}>pdfs/</Text>{" "}
+                    <Text code style={{ fontSize: 11 }}>sources/</Text>
+                  </span>
+                }
+              />
+            )}
+          </div>
+        )}
+      </Modal>
     </Card>
   );
 }

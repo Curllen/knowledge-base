@@ -14,8 +14,11 @@ import AiChatPage from "@/pages/ai";
 import TasksPage from "@/pages/tasks";
 import PromptsPage from "@/pages/prompts";
 import HiddenPage from "@/pages/hidden";
+import MigrationSplash from "@/pages/migration-splash";
 
 const router = createHashRouter([
+  // T-013 完整版：迁移 splash 独立 URL，不走 AppLayout（启动期 db 还没初始化）
+  { path: "/migration-splash", element: <MigrationSplash /> },
   {
     path: "/",
     element: <AppLayout />,

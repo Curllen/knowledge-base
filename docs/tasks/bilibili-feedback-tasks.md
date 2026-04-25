@@ -389,11 +389,32 @@
   - **重启生效**：set_pending 只写指针，不动当前进程的 db 连接；不自动迁移老数据
 - **测试**：`cargo test services::data_dir` 5/5 通过 + `cargo check` + `npx tsc --noEmit` 全绿
 - **优先级**：env `KB_DATA_DIR` > 指针文件 `data_dir.txt` > 默认 app_data_dir
-- **待用户手动验证**：
-  1. 设置页底部"数据目录"卡片显示当前路径 + 默认路径
-  2. 选 D 盘空目录 → 弹 Modal 二次确认 → 关应用重启
-  3. 重启后空库（指向新目录无 db），用户手动复制 `app.db + kb_assets/` 后再开
-  4. 点"恢复默认" → 重启后回到 C 盘 app_data_dir
+
+##### T-013 完整版：自动迁移（2026-04-25 续做）✅
+
+用户决策：方案 A（独立 splash 窗口 + 启动期 rename/复制 + 旧目录保留作备份）
+
+- [x] 后端 `services/data_dir.rs` 加 ~250 行：
+  - `MigrationStatus / MigrationMarker / MigrationProgress` 类型
+  - `set_pending_with_migration` / `read_migration_marker` / `mark_migration_done` / `cancel_migration` / `run_migration` 方法
+  - 流式复制 + 64KB 缓冲 + 每 4MB emit 一次进度（避免事件爆炸）
+  - rename 优先（同盘 O(1)）→ 跨盘 fallback 流式复制
+  - completed_items 持久化 → 中途崩溃可续传
+  - 旧目录保留 + 写入 `_MIGRATED_README.txt`
+- [x] 后端 `lib.rs::run_data_dir_migration_with_splash`（70 行）：
+  - 启动早期检测 marker → 创建独立 `migration-splash` 窗口
+  - URL = `index.html#/migration-splash`（同 React 包，HashRouter 路由）
+  - 阻塞跑 `run_migration`，emit 进度到 splash 窗口
+  - 完成后 close splash，setup 继续往下（db init）
+- [x] 后端 commands/data_dir.rs 加 3 个：set_pending_with_migration / cancel_pending_migration / get_migration_marker
+- [x] `tauri.conf.json` 主窗 `visible: false` + `label: "main"`，setup 末尾 show（迁移期间被 splash 顶住）
+- [x] 前端 types/index.ts：MigrationStatus / MigrationMarker / MigrationProgress
+- [x] 前端 lib/api：dataDirApi.setPendingWithMigration / cancelPendingMigration / getMigrationMarker
+- [x] 前端 `pages/migration-splash/index.tsx`（160 行）：listen `data_dir:migrate_progress` → 进度条 + 实时文件名 + 字节统计 + 完成 Result
+- [x] 前端 `Router.tsx` 加 `/migration-splash` 路由（不走 AppLayout）
+- [x] 前端 `DataDirSection.tsx`：Modal 改为 useState 控制 + Radio 选"自动迁移 / 手动迁移"
+- [x] `cargo check` + `npx tsc --noEmit` 全绿
+- **待手动验证**：选新目录 → 选"自动迁移" → 重启 → 看 splash 窗口跑进度 → 主窗自动打开 → 验证笔记数据完整
 
 ---
 
@@ -419,10 +440,15 @@
 
 #### T-016 · 导入笔记到当前选中文件夹（**小修但 UX 影响大**）
 
-- **状态**：`pending`
+- **状态**：`completed`（待用户手动验证）  · 完成日期：2026-04-25
 - **来源建议**：玛卡巴卡的冷吃兔#22 "导入笔记只能导入再分类，不能在选中的文件夹下面导入直接自动归类" / 傲娇的小小森#80 / 昱羽#81
-- **价值**：⭐⭐⭐⭐  成本：极低
-- **建议方案**：检查现有"导入"按钮，传入当前侧栏选中的 folder_id 作为默认目标；纯前端改动 + Service 层加可选参数
+- **现状盘查**（多入口已支持）：
+  - ✅ 右键文件夹 → "导入 Markdown 文件…" / "导入 Markdown 文件夹…" — `folderKey` 直接传入作为目标 folder
+  - ✅ 设置页 → 有 `importFolderId` 文件夹选择器 + 显式 `importApi.importSelected(paths, importFolderId)`
+  - ✅ Sidebar 文件夹右键也走相同流程
+- **本次补的 1 个洞**（`src/components/layout/panels/NotesPanel.tsx::handleOsFilesDropped`）：从 OS 拖 .md / .txt 文件到 NotesPanel 整体区域时，原代码硬编码 `folder_id: null` → 根目录；改为读取 `selectedKey`（侧栏当前选中的文件夹），有则落该文件夹，无则落根。快路径（importApi.importSelected）和慢路径（noteApi.create）都同步改造
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：在 Sidebar 选中某文件夹 → 拖 OS 上几个 .md 到 NotesPanel → 验证笔记落到选中文件夹下
 
 ---
 
@@ -437,10 +463,12 @@
 
 #### T-018 · 侧栏可拉伸 / 文件夹嵌套折叠优化
 
-- **状态**：`pending`
+- **状态**：`completed`（侧栏拉伸早期已实现，2026-04-25 复查确认）
 - **来源建议**：玛卡巴卡的冷吃兔#22 "侧边栏无法拉伸，子文件夹嵌套过多后看着就很奇怪"
-- **价值**：⭐⭐⭐  成本：低
-- **建议方案**：用 `react-resizable-panels` 替换或包裹 `SidePanel`；文件夹嵌套缩进改用动态减小（每层 -2px）+ 鼠标悬停显示完整路径 tooltip
+- **现状盘查**：
+  - ✅ **侧栏可拉伸**：`AppLayout.tsx:130-153` 实现完整拖宽逻辑（mousedown / mousemove + rAF 节流 / mouseup）；`global.css:92-96` 配套 `contain + will-change` 性能优化；宽度持久化到 store
+  - ✅ **文件夹嵌套缩进优化**：`global.css:82-84` 已把 antd Tree 的 `--ant-tree-indent-unit` 从默认 24px 压到 12px，4~5 级嵌套仍能在 220px Sider 内容纳
+- **未做（v2 候选）**：鼠标悬停显示完整路径 tooltip（嵌套 5+ 级时仍可能截断）；优先级低，等用户反馈再补
 
 ---
 
@@ -495,10 +523,15 @@
 
 #### T-B03 · WebDAV 导入默认行为是"覆盖"（吓人）
 
-- **状态**：`pending`
+- **状态**：`completed`（待用户手动验证）  · 完成日期：2026-04-25
 - **来源建议**：ちょっとおかしい#54 "导入模式 覆盖（清空本地）合并...你居然默认是覆盖...有点吓人"
 - **影响**：用户误点导致本地数据被云端覆盖
-- **修复**：默认改为"合并"；"覆盖"前增加二次确认（输入"我确认覆盖"）
+- **修复**：
+  - `src/components/settings/SyncSection.tsx`：`useState<SyncImportMode>("overwrite")` → `"merge"`
+  - Radio 顺序调整：合并放第一位 + "（推荐 · 只添加云端有而本地无的资产）" 副标；覆盖放第二位 + Danger 红字 "（危险 · 清空本地，用云端替换）"
+  - 二次确认 Modal **已存在**（覆盖时弹"危险操作"对话框 + 输入确认词），保留
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：设置页 → WebDAV 同步 → 导入模式默认应为"合并"；切到"覆盖"时弹危险确认 Modal 不变
 
 ---
 
@@ -535,19 +568,24 @@
 
 #### T-B07 · 写长文档时工具栏不跟随
 
-- **状态**：`pending`
+- **状态**：`completed`（早期已修，2026-04-25 复查确认）
 - **来源建议**：零想说#52 "写长文档的时候，工具栏没法跟随，有点伤"
-- **影响**：长文档下方编辑时要滚回顶部找加粗 / 链接按钮
-- **修复**：编辑器顶栏改 `position: sticky; top: 0`，或用 Tiptap 的 BubbleMenu
+- **现状盘查**：`src/styles/global.css` `.tiptap-toolbar` 已配 `position: sticky; top: 0; z-index: 10`，长文档下滚时工具栏会吸顶，按钮始终可见 — 实测已生效
+- **如仍有问题**：可能是 `.editor-content-area .tiptap-wrapper` 的 `overflow` 链路没保证 sticky 参考容器（已在 css 注释里注明"解除 overflow:hidden 否则 sticky 失效"）；用户复测仍异常请贴截图 + 滚动位置
 
 ---
 
 #### T-B08 · 反向链接面板入口不显眼
 
-- **状态**：`pending`
+- **状态**：`completed`（待用户手动验证）  · 完成日期：2026-04-25
 - **来源建议**：bilicxma#109 "底部反向链接面板在哪里找"
-- **影响**：用户找不到已经实现的功能
-- **修复**：编辑器右侧抽屉加显眼图标 + tooltip "反向链接 (N)"；或在文档站加截图说明
+- **影响**：用户找不到已经实现的功能（面板埋在编辑器正文下方 + 0 反链时整面板隐身）
+- **修复**（`src/pages/notes/editor.tsx`）：
+  - 编辑器顶部按钮区在 Encrypt 按钮后新增 **Link2 图标 + Badge 数字** 按钮（badge 显示反链数；0 条时灰色 badge）；点击后 `scrollIntoView({behavior: smooth})` 滚到反链面板
+  - `BacklinksPanel` 加 `id="backlinks-panel"` 锚点
+  - **空态保留显示**：从"0 条直接 return null"改成"显示『暂无其他笔记链接到这里』+ 引导用户去其他笔记输 `[[本笔记标题]]`"；面板加上方分隔线让它更显眼
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：(1) 打开任意笔记 → 顶部应有 Link2 图标按钮，badge 显示反链数（0 条时灰色）；(2) 点击按钮平滑滚动到底部反链面板；(3) 0 反链笔记面板显示空态文案
 
 ---
 

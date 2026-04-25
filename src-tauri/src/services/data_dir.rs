@@ -12,17 +12,46 @@
 //!   只有这样换数据目录后下次启动才知道去哪找用户的自定义路径
 //! - **单实例锁仍在 framework app_data_dir**：换数据目录不应突破单例约束
 //! - **用户的"自定义路径"是数据存储根**（db / 资产 / 多开实例子目录都基于此）
-//! - **不自动迁移老数据**：v1 让用户手动复制旧 `app.db + kb_assets/`，UI 给清晰指引
 //! - **重启生效**：set_pending 只写指针文件，不动当前进程的 db 连接，避免连接竞态
+//! - **可选自动迁移**（T-013 完整版）：set_pending_with_migration 同时写一个 marker，
+//!   下次启动时 lib.rs::setup 检测到 marker → 弹独立 splash 窗口跑迁移 → 完成后初始化 DB
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
 /// 指针文件名（位于 framework app_data_dir 内）
 pub const POINTER_FILE: &str = "data_dir.txt";
+
+/// 迁移 marker 文件名（位于 framework app_data_dir 内）
+pub const MIGRATION_MARKER: &str = "migration.json";
+
+/// 单次迁移要复制的子项（按出现顺序，db 优先确保数据完整性）
+///
+/// 这些路径是**相对 source_root** 的相对路径；resolver 自动 join 拼到 source/target。
+const MIGRATION_ITEMS: &[&str] = &[
+    // db 主文件 + WAL + SHM；非 dev
+    "app.db",
+    "app.db-wal",
+    "app.db-shm",
+    // db dev 前缀（cfg!(debug_assertions) 启动时项目会加 dev- 前缀）
+    "dev-app.db",
+    "dev-app.db-wal",
+    "dev-app.db-shm",
+    // 资产目录
+    "kb_assets",
+    "attachments",
+    "pdfs",
+    "sources",
+    // dev 资产
+    "dev-kb_assets",
+    "dev-attachments",
+    "dev-pdfs",
+    "dev-sources",
+];
 
 /// 自定义路径来源
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -157,6 +186,356 @@ impl DataDirResolver {
 }
 
 /// 读指针文件；不存在返回 Ok(None)；空白内容也视为 None
+// ─── T-013 完整版：自动迁移 ──────────────────────────
+
+/// 迁移 marker 状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationStatus {
+    /// 已写入 marker，等待启动期执行
+    Pending,
+    /// 启动期检测到，正在执行
+    InProgress,
+    /// 上次中途崩溃，需要用户重试 / 放弃
+    Crashed,
+    /// 完成
+    Done,
+}
+
+/// marker 文件内容（启动期读 + 写）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationMarker {
+    pub from: String,
+    pub to: String,
+    pub status: MigrationStatus,
+    pub started_at: String,
+    /// 最后一次更新（每完成一项更新；用于检测崩溃）
+    pub updated_at: String,
+    /// 已成功复制的项（相对路径，对应 MIGRATION_ITEMS 中条目）
+    #[serde(default)]
+    pub completed_items: Vec<String>,
+}
+
+/// 单次迁移进度事件（emit 给 splash 窗口）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationProgress {
+    /// "scan" | "copy_file" | "verify" | "done" | "error"
+    pub phase: String,
+    /// 当前正在处理的相对路径（item 内的文件）
+    pub current_file: String,
+    /// 当前 item 在 MIGRATION_ITEMS 中的索引（基于实际存在的 items）
+    pub item_index: usize,
+    /// 实际存在的 item 总数
+    pub item_total: usize,
+    /// 已完成字节数（累计）
+    pub bytes_done: u64,
+    /// 总字节数（扫描后已知）
+    pub bytes_total: u64,
+    /// 一句话状态
+    pub message: String,
+}
+
+/// 进度回调类型
+pub type ProgressEmitter = dyn Fn(&MigrationProgress) + Send + Sync;
+
+impl DataDirResolver {
+    /// 在 set_pending 同时写一个迁移 marker
+    pub fn set_pending_with_migration(
+        framework_app_data_dir: &Path,
+        from_dir: &Path,
+        to_dir: &str,
+    ) -> Result<(), AppError> {
+        // 先按普通流程写指针
+        Self::set_pending(framework_app_data_dir, to_dir)?;
+        // 再写迁移 marker
+        let marker = MigrationMarker {
+            from: from_dir.to_string_lossy().into(),
+            to: to_dir.to_string(),
+            status: MigrationStatus::Pending,
+            started_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            completed_items: Vec::new(),
+        };
+        write_marker(framework_app_data_dir, &marker)?;
+        log::info!(
+            "[migration] 已写入 marker: {} → {}",
+            marker.from, marker.to
+        );
+        Ok(())
+    }
+
+    /// 启动期：读 marker；不存在返回 None
+    pub fn read_migration_marker(
+        framework_app_data_dir: &Path,
+    ) -> Result<Option<MigrationMarker>, AppError> {
+        let path = framework_app_data_dir.join(MIGRATION_MARKER);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&path)?;
+        let m: MigrationMarker = serde_json::from_slice(&bytes).map_err(|e| {
+            AppError::Custom(format!("迁移 marker 解析失败: {}", e))
+        })?;
+        Ok(Some(m))
+    }
+
+    /// 启动期：把 marker 标为完成（迁移结束后调）
+    pub fn mark_migration_done(framework_app_data_dir: &Path) -> Result<(), AppError> {
+        let path = framework_app_data_dir.join(MIGRATION_MARKER);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    /// 启动期：取消迁移 — 删 marker + 删指针 → 下次启动回到原位置
+    pub fn cancel_migration(framework_app_data_dir: &Path) -> Result<(), AppError> {
+        Self::clear_pending(framework_app_data_dir)?;
+        let path = framework_app_data_dir.join(MIGRATION_MARKER);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        log::info!("[migration] 已取消迁移：删除 marker + 指针");
+        Ok(())
+    }
+
+    /// 启动期：执行迁移
+    ///
+    /// - 流式逐文件复制（rename 优先；rename 失败回退流式 copy）
+    /// - 不删旧目录（保留作备份；UI 给"清理旧目录"按钮供用户事后操作）
+    /// - 中途任意一步失败：返回 Err，marker 保留（下次启动用户能看到"上次崩溃"）
+    /// - 全部成功后：mark_migration_done 删 marker
+    pub fn run_migration(
+        framework_app_data_dir: &Path,
+        marker: &MigrationMarker,
+        emit: &ProgressEmitter,
+    ) -> Result<(), AppError> {
+        let from = PathBuf::from(&marker.from);
+        let to = PathBuf::from(&marker.to);
+        std::fs::create_dir_all(&to)?;
+
+        // 写 in_progress 状态
+        let mut current = marker.clone();
+        current.status = MigrationStatus::InProgress;
+        write_marker(framework_app_data_dir, &current)?;
+
+        // 扫描存在的 items + 总字节
+        emit(&MigrationProgress {
+            phase: "scan".into(),
+            current_file: String::new(),
+            item_index: 0,
+            item_total: 0,
+            bytes_done: 0,
+            bytes_total: 0,
+            message: "正在统计文件大小…".into(),
+        });
+        let plan = scan_items(&from)?;
+        let bytes_total: u64 = plan.iter().map(|p| p.size).sum();
+        let item_total = plan.len();
+        log::info!(
+            "[migration] 扫描完成：{} 项，共 {:.2} MB",
+            item_total,
+            bytes_total as f64 / 1024.0 / 1024.0
+        );
+
+        let mut bytes_done = 0u64;
+        for (idx, item) in plan.iter().enumerate() {
+            let src = from.join(&item.rel);
+            let dst = to.join(&item.rel);
+
+            // 跳过已完成（崩溃恢复时复用进度）
+            if current.completed_items.contains(&item.rel) {
+                bytes_done += item.size;
+                continue;
+            }
+
+            emit(&MigrationProgress {
+                phase: if item.is_dir { "copy_dir" } else { "copy_file" }.into(),
+                current_file: item.rel.clone(),
+                item_index: idx + 1,
+                item_total,
+                bytes_done,
+                bytes_total,
+                message: format!("正在复制 {}", item.rel),
+            });
+
+            // 1) 优先 rename（同盘 O(1)）
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let rename_ok = std::fs::rename(&src, &dst).is_ok();
+            if !rename_ok {
+                // 2) 跨盘 fallback：流式复制
+                if item.is_dir {
+                    copy_dir_recursive(&src, &dst, &mut bytes_done, bytes_total, emit, &item.rel)?;
+                } else {
+                    copy_file_with_progress(&src, &dst, &mut bytes_done, bytes_total, emit, &item.rel)?;
+                }
+            } else {
+                bytes_done += item.size;
+            }
+
+            // 标记完成 + 持久化
+            current.completed_items.push(item.rel.clone());
+            current.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            write_marker(framework_app_data_dir, &current)?;
+        }
+
+        // 旧目录写一个 README 让用户知道可以删
+        let readme = from.join("_MIGRATED_README.txt");
+        let _ = std::fs::write(
+            &readme,
+            format!(
+                "本目录的数据已于 {} 迁移到：\n{}\n\n确认新目录数据正常后，可手动删除本目录。\n（应用不会自动清理旧数据，避免误删。）\n",
+                current.updated_at, current.to
+            ),
+        );
+
+        // 删 marker
+        Self::mark_migration_done(framework_app_data_dir)?;
+
+        emit(&MigrationProgress {
+            phase: "done".into(),
+            current_file: String::new(),
+            item_index: item_total,
+            item_total,
+            bytes_done: bytes_total,
+            bytes_total,
+            message: format!(
+                "迁移完成：{} 项，{:.2} MB",
+                item_total,
+                bytes_total as f64 / 1024.0 / 1024.0
+            ),
+        });
+        Ok(())
+    }
+}
+
+/// 单个迁移项（文件或目录）的扫描结果
+#[derive(Debug)]
+struct PlanItem {
+    rel: String,
+    is_dir: bool,
+    size: u64,
+}
+
+/// 扫描 source 下哪些 MIGRATION_ITEMS 存在 + 算总大小
+fn scan_items(from: &Path) -> Result<Vec<PlanItem>, AppError> {
+    let mut out = Vec::new();
+    for &name in MIGRATION_ITEMS {
+        let p = from.join(name);
+        if !p.exists() {
+            continue;
+        }
+        let is_dir = p.is_dir();
+        let size = if is_dir { dir_size(&p)? } else {
+            std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0)
+        };
+        out.push(PlanItem {
+            rel: name.to_string(),
+            is_dir,
+            size,
+        });
+    }
+    Ok(out)
+}
+
+/// 递归算目录字节数
+fn dir_size(path: &Path) -> Result<u64, AppError> {
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            total += dir_size(&p)?;
+        } else if let Ok(m) = entry.metadata() {
+            total += m.len();
+        }
+    }
+    Ok(total)
+}
+
+/// 流式复制单文件 + 64 KB 缓冲；定期 emit 进度
+fn copy_file_with_progress(
+    src: &Path,
+    dst: &Path,
+    bytes_done: &mut u64,
+    bytes_total: u64,
+    emit: &ProgressEmitter,
+    rel: &str,
+) -> Result<(), AppError> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut input = std::fs::File::open(src)?;
+    let mut output = std::fs::File::create(dst)?;
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut last_emit_bytes = *bytes_done;
+    loop {
+        let n = input.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        output.write_all(&buf[..n])?;
+        *bytes_done += n as u64;
+        // 每 4 MB emit 一次（避免事件爆炸）
+        if *bytes_done - last_emit_bytes >= 4 * 1024 * 1024 {
+            emit(&MigrationProgress {
+                phase: "copy_file".into(),
+                current_file: rel.to_string(),
+                item_index: 0,
+                item_total: 0,
+                bytes_done: *bytes_done,
+                bytes_total,
+                message: format!("复制中 {}", rel),
+            });
+            last_emit_bytes = *bytes_done;
+        }
+    }
+    output.sync_all().ok();
+    Ok(())
+}
+
+/// 递归复制整个目录
+fn copy_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    bytes_done: &mut u64,
+    bytes_total: u64,
+    emit: &ProgressEmitter,
+    rel: &str,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from_path = entry.path();
+        let file_name = entry.file_name();
+        let to_path = dst.join(&file_name);
+        if from_path.is_dir() {
+            let sub_rel = format!("{}/{}", rel, file_name.to_string_lossy());
+            copy_dir_recursive(&from_path, &to_path, bytes_done, bytes_total, emit, &sub_rel)?;
+        } else {
+            let sub_rel = format!("{}/{}", rel, file_name.to_string_lossy());
+            copy_file_with_progress(&from_path, &to_path, bytes_done, bytes_total, emit, &sub_rel)?;
+        }
+    }
+    Ok(())
+}
+
+/// 写 marker 文件（atomic：tmp + rename）
+fn write_marker(framework_app_data_dir: &Path, marker: &MigrationMarker) -> Result<(), AppError> {
+    let path = framework_app_data_dir.join(MIGRATION_MARKER);
+    let tmp = framework_app_data_dir.join(format!("{}.tmp", MIGRATION_MARKER));
+    let bytes = serde_json::to_vec_pretty(marker).map_err(|e| AppError::Custom(e.to_string()))?;
+    std::fs::write(&tmp, bytes)?;
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
 fn read_pointer(default_app_data_dir: &Path) -> Result<Option<String>, AppError> {
     let pointer = default_app_data_dir.join(POINTER_FILE);
     if !pointer.exists() {
