@@ -31,7 +31,9 @@ import { noteApi, dailyApi, systemApi, taskApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
+import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { createBlankAndOpen } from "@/lib/noteCreator";
+import { useAppStore } from "@/store";
 import type { Note, DashboardStats, DailyWritingStat, TaskStats } from "@/types";
 
 const { Text, Paragraph } = Typography;
@@ -46,6 +48,9 @@ export default function HomePage() {
   const [taskStats, setTaskStats] = useState<TaskStats | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [loading, setLoading] = useState(true);
+  // 添加待办 Modal 受控（与 tasks 页用同一组件，弹出 → 写 → 保存即可）
+  const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -201,15 +206,26 @@ export default function HomePage() {
         ))}
       </Row>
 
-      {/* 快捷操作 */}
+      {/* 快捷操作 — 4 栏：创建动作（笔记 / 待办）+ 跳转动作（今日 / AI） */}
       <Row gutter={12}>
-        <Col span={8}>
+        <Col span={6}>
           <NewNoteButton
             block
             style={{ borderRadius: 8, height: 40 }}
           />
         </Col>
-        <Col span={8}>
+        <Col span={6}>
+          <Button
+            type="default"
+            icon={<CheckSquare size={15} />}
+            onClick={() => setCreateTaskOpen(true)}
+            block
+            style={{ borderRadius: 8, height: 40 }}
+          >
+            添加待办
+          </Button>
+        </Col>
+        <Col span={6}>
           <Button
             type="default"
             icon={<Calendar size={15} />}
@@ -220,7 +236,7 @@ export default function HomePage() {
             今日笔记
           </Button>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <Button
             type="default"
             icon={<Bot size={15} />}
@@ -430,6 +446,18 @@ export default function HomePage() {
           </Card>
         </Col>
       </Row>
+
+      {/* 添加待办 Modal — 与 tasks 页同一组件；保存后刷新 stats 卡片 + 侧边栏 Badge */}
+      <CreateTaskModal
+        open={createTaskOpen}
+        onClose={() => setCreateTaskOpen(false)}
+        onSaved={() => {
+          setCreateTaskOpen(false);
+          refreshTaskStats();
+          // 同步刷新本页面"待办"统计卡片
+          taskApi.stats().then(setTaskStats).catch(() => {});
+        }}
+      />
     </div>
   );
 }
