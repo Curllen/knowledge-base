@@ -643,10 +643,12 @@ export function NotesPanel() {
       return ext === "md" || ext === "markdown";
     });
     const paths = mdOnly.length === texts.length ? collectOsPaths(texts) : null;
+    // T-016: 当前侧栏选中了文件夹时，落到该文件夹下（OB 用户期望）；未选中则落根
+    const targetFolderId = selectedKey ? Number(selectedKey) : null;
     if (paths && paths.length > 0) {
       const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
       try {
-        const result = await importApi.importSelected(paths, null);
+        const result = await importApi.importSelected(paths, targetFolderId);
         hide();
         const parts: string[] = [];
         if (result.imported > 0) parts.push(`新建 ${result.imported}`);
@@ -674,7 +676,12 @@ export function NotesPanel() {
       try {
         const content = await f.text();
         const title = f.name.replace(/\.(md|markdown|txt)$/i, "").trim() || "未命名";
-        const note = await noteApi.create({ title, content, folder_id: null });
+        // T-016: 与快路径保持一致，选中文件夹时落到该文件夹
+        const note = await noteApi.create({
+          title,
+          content,
+          folder_id: targetFolderId,
+        });
         lastId = note.id;
         ok++;
       } catch (e) {

@@ -15,6 +15,7 @@ import {
   List,
   Popover,
   Tree,
+  Badge,
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
@@ -45,7 +46,11 @@ function extractWikiLinks(html: string): string[] {
   return [...new Set(titles)]; // 去重
 }
 
-/** 反向链接面板 */
+/** 反向链接面板
+ *
+ * T-B08: 即使 0 条也显示空态卡片，让用户知道这个区域存在；用 id 锚定，
+ * 顶部 Link2 按钮可滚动定位到此处。
+ */
 function BacklinksPanel({
   backlinks,
   onNavigate,
@@ -53,30 +58,34 @@ function BacklinksPanel({
   backlinks: NoteLink[];
   onNavigate: (id: number) => void;
 }) {
-  if (backlinks.length === 0) return null;
-
   return (
-    <div className="mt-4">
+    <div id="backlinks-panel" className="mt-6 pt-4 border-t border-gray-100">
       <div className="flex items-center gap-2 mb-2">
         <Link2 size={14} className="text-gray-400" />
         <Text type="secondary" style={{ fontSize: 13 }}>
           反向链接 ({backlinks.length})
         </Text>
       </div>
-      <div className="flex flex-col gap-1">
-        {backlinks.map((link) => (
-          <div
-            key={link.source_id}
-            className="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer hover:bg-gray-50"
-            onClick={() => onNavigate(link.source_id)}
-          >
-            <Text style={{ fontSize: 13 }}>{link.source_title}</Text>
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {relativeTime(link.updated_at)}
-            </Text>
-          </div>
-        ))}
-      </div>
+      {backlinks.length === 0 ? (
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          暂无其他笔记链接到这里。在其他笔记中输入 <Text code style={{ fontSize: 11 }}>[[本笔记标题]]</Text> 即可建立反向链接。
+        </Text>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {backlinks.map((link) => (
+            <div
+              key={link.source_id}
+              className="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer hover:bg-gray-50"
+              onClick={() => onNavigate(link.source_id)}
+            >
+              <Text style={{ fontSize: 13 }}>{link.source_title}</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {relativeTime(link.updated_at)}
+              </Text>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1046,6 +1055,29 @@ export default function NoteEditorPage() {
               icon={note?.is_encrypted ? <Lock size={16} /> : <Unlock size={16} />}
               onClick={handleToggleEncrypt}
             />
+          </Tooltip>
+          <Tooltip
+            title={
+              backlinks.length > 0
+                ? `${backlinks.length} 条反向链接 — 点击滚动到底部查看`
+                : "反向链接（暂无）— 点击查看说明"
+            }
+          >
+            <Badge
+              count={backlinks.length}
+              size="small"
+              offset={[-2, 2]}
+              color={backlinks.length > 0 ? undefined : "#bfbfbf"}
+            >
+              <Button
+                icon={<Link2 size={16} />}
+                onClick={() => {
+                  document
+                    .getElementById("backlinks-panel")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              />
+            </Badge>
           </Tooltip>
           <Button
             type="primary"

@@ -71,7 +71,9 @@ function persistUsername(v: string) {
 export function SyncSection() {
   // 同步范围 & 模式
   const [scope, setScope] = useState<SyncScope>({ ...DEFAULT_SYNC_SCOPE });
-  const [importMode, setImportMode] = useState<SyncImportMode>("overwrite");
+  // T-B03: 默认改为"合并"。覆盖模式风险高（清空本地）；用户多次反馈
+  // "默认覆盖很吓人"，仅在用户主动切到覆盖时才走危险路径，且仍有二次确认拦截
+  const [importMode, setImportMode] = useState<SyncImportMode>("merge");
 
   // WebDAV 配置
   const [url, setUrl] = useState("");
@@ -462,12 +464,16 @@ export function SyncSection() {
         </div>
       </div>
 
-      {/* 导入模式 */}
+      {/* 导入模式 — T-B03 默认改"合并"，覆盖移到第二位且明示危险 */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>导入模式</div>
         <Radio.Group value={importMode} onChange={(e) => setImportMode(e.target.value)}>
-          <Radio value="overwrite">覆盖（清空本地，用云端替换）</Radio>
-          <Radio value="merge">合并（只添加云端有而本地无的资产）</Radio>
+          <Radio value="merge">
+            合并 <Text type="secondary" style={{ fontSize: 12 }}>（推荐 · 只添加云端有而本地无的资产）</Text>
+          </Radio>
+          <Radio value="overwrite">
+            覆盖 <Text type="danger" style={{ fontSize: 12 }}>（危险 · 清空本地，用云端替换）</Text>
+          </Radio>
         </Radio.Group>
       </div>
 
