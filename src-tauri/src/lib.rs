@@ -435,6 +435,17 @@ pub fn run() {
             commands::vault::encrypt_note,
             commands::vault::decrypt_note,
             commands::vault::disable_note_encrypt,
+            // T-024 同步 V1（多端真同步 + 多 backend）
+            commands::sync_v1::sync_v1_list_backends,
+            commands::sync_v1::sync_v1_get_backend,
+            commands::sync_v1::sync_v1_create_backend,
+            commands::sync_v1::sync_v1_update_backend,
+            commands::sync_v1::sync_v1_delete_backend,
+            commands::sync_v1::sync_v1_test_connection,
+            commands::sync_v1::sync_v1_read_remote_manifest,
+            commands::sync_v1::sync_v1_push,
+            commands::sync_v1::sync_v1_pull,
+            commands::sync_v1::sync_v1_get_local_manifest,
             // 文件夹模块
             commands::folders::create_folder,
             commands::folders::rename_folder,

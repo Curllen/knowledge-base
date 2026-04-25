@@ -4,7 +4,7 @@ import { Button, Badge, theme as antdTheme } from "antd";
 import {
   CheckSquare,
   Plus,
-  Inbox,
+  ListChecks,
   AlertTriangle,
   Sun,
   CalendarRange,
@@ -176,10 +176,15 @@ export function TasksPanel() {
         style={{ minHeight: 0, padding: "6px 8px" }}
       >
         {/* 智能列表 */}
+        {/*
+          "全部任务" = 默认入口视图；列表视图下展示进行中任务 + 底部"已完成"折叠区，
+          日历视图下进行中正常显示、已完成置灰显示。Badge 数仍只数未完成（与
+          urgentTodoCount 等其他维度保持一致）。
+        */}
         <SmartRow
           active={currentFilter === "todo"}
-          icon={<Inbox size={14} />}
-          label="进行中"
+          icon={<ListChecks size={14} />}
+          label="全部任务"
           count={counts.todo}
           onClick={() => goTo("todo")}
           token={token}

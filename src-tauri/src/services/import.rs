@@ -39,6 +39,9 @@ impl ImportService {
         let mut files: Vec<ScannedFile> = WalkDir::new(root)
             .sort_by_file_name() // 同层按字母序稳定排序
             .into_iter()
+            // T-009: 跳过 OB 配置目录 / 隐藏目录 / 常见噪音目录，避免把 .obsidian / .trash /
+            // .git 这类内部状态当成笔记导入。是否应跳过由 should_skip_dir_entry 判断。
+            .filter_entry(|e| !should_skip_dir_entry(e))
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_type().is_file()
@@ -119,6 +122,7 @@ impl ImportService {
         root_path: Option<&str>,
         preserve_root: bool,
         policy: ImportConflictPolicy,
+        app_data_dir: &Path,
         emitter: &E,
     ) -> Result<ImportResult, AppError> {
         let total = file_paths.len();
@@ -126,6 +130,19 @@ impl ImportService {
         let mut skipped = 0usize;
         let mut duplicated = 0usize;
         let mut errors = Vec::new();
+        // T-009 frontmatter 统计
+        let mut tags_attached = 0usize;
+        let mut frontmatter_parsed = 0usize;
+        // T-009 Commit 2 附件复制统计
+        let mut attachments_copied = 0usize;
+        let mut attachments_missing: Vec<String> = Vec::new();
+
+        // 提供了 root_path 时，在那里建附件索引（OB vault 模式）；
+        // 没传则不索引（用户只是导入零散 .md 文件，没 vault 上下文）
+        let attachment_index = match root_path {
+            Some(rp) => crate::services::import_attachments::AttachmentIndex::build(Path::new(rp)),
+            None => crate::services::import_attachments::AttachmentIndex::empty(),
+        };
 
         // 预先算好根扫描路径（用于对每个文件算相对目录）+ 预先建"保留根"文件夹
         let root_canonical: Option<PathBuf> = root_path
@@ -190,17 +207,33 @@ impl ImportService {
                 continue;
             }
 
+            // ─── T-009: 解析 frontmatter，剥离 yaml block 后才是真正的笔记正文 ───
+            let (front_matter, body_content) =
+                crate::services::markdown::parse_frontmatter(&content);
+            if front_matter.is_some() {
+                frontmatter_parsed += 1;
+            }
+
             // ─── 去重判定（与 scan 阶段用同一套逻辑，避免扫描后文件被改动造成不一致）
+            // 注意：去重比对用 body_content（剥离 frontmatter 后），与 import 实际写库内容
+            // 保持一致，避免"frontmatter 改了但正文没改"被误判为新笔记
             let canonical_path = canonicalize_path(file_path);
-            let title = extract_title(&content).unwrap_or_else(|| file_name.clone());
-            let (match_kind, _existing_id) =
-                match detect_existing_match_with_content(db, &canonical_path, &title, &content) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        errors.push(format!("{}: 去重检测失败 - {}", file_name, e));
-                        continue;
-                    }
-                };
+            let fm_title = front_matter.as_ref().and_then(|fm| fm.title.clone());
+            let title = fm_title
+                .or_else(|| extract_title(&body_content))
+                .unwrap_or_else(|| file_name.clone());
+            let (match_kind, _existing_id) = match detect_existing_match_with_content(
+                db,
+                &canonical_path,
+                &title,
+                &body_content,
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{}: 去重检测失败 - {}", file_name, e));
+                    continue;
+                }
+            };
 
             // 冲突策略分支
             let final_title = match (match_kind.as_str(), policy) {
@@ -234,7 +267,7 @@ impl ImportService {
 
             let input = NoteInput {
                 title: final_title.clone(),
-                content,
+                content: body_content,
                 folder_id: target_folder_id,
             };
 
@@ -248,6 +281,68 @@ impl ImportService {
                         Some(&canonical_path),
                         Some("md"),
                     );
+
+                    // ─── T-009: 把 frontmatter 中的标签关联到这条笔记 ───
+                    if let Some(fm) = &front_matter {
+                        for tag_name in &fm.tags {
+                            match db.get_or_create_tag_by_name(tag_name) {
+                                Ok(tag_id) => {
+                                    if db.add_tag_to_note(note.id, tag_id).is_ok() {
+                                        tags_attached += 1;
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[import] 处理 frontmatter 标签失败 ({}/{}): {}",
+                                        final_title, tag_name, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // ─── T-009 Commit 2: 复制图片附件 + body 路径重写 ───
+                    if let Some(root_c) = root_canonical.as_ref() {
+                        let note_dir = file_path.parent().unwrap_or(root_c);
+                        match crate::services::import_attachments::rewrite_image_paths(
+                            &input.content,
+                            note.id,
+                            note_dir,
+                            root_c,
+                            &attachment_index,
+                            app_data_dir,
+                        ) {
+                            Ok(rewrite) => {
+                                if rewrite.copied > 0 {
+                                    attachments_copied += rewrite.copied;
+                                    // 仅在内容真的变了时才回写，省一次 DB 写
+                                    if rewrite.new_body != input.content {
+                                        if let Err(e) = db.update_note_content(
+                                            note.id,
+                                            &rewrite.new_body,
+                                        ) {
+                                            log::warn!(
+                                                "[import] 笔记 {} 图片重写后回写失败: {}",
+                                                note.id, e
+                                            );
+                                        }
+                                    }
+                                }
+                                for m in rewrite.missing {
+                                    // 在汇总里前缀笔记标题，方便用户排查
+                                    attachments_missing
+                                        .push(format!("{}: {}", final_title, m));
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[import] 笔记 {} 图片重写失败: {}",
+                                    note.id, e
+                                );
+                            }
+                        }
+                    }
+
                     if match_kind == "new" {
                         imported += 1;
                     }
@@ -264,6 +359,10 @@ impl ImportService {
             skipped,
             duplicated,
             errors,
+            tags_attached,
+            frontmatter_parsed,
+            attachments_copied,
+            attachments_missing,
         };
 
         let _ = emitter.emit("import:done", &result);
@@ -476,4 +575,63 @@ fn detect_existing_match_with_content(
         return Ok(("fuzzy".to_string(), Some(id)));
     }
     Ok(("new".to_string(), None))
+}
+
+/// T-009: 遍历时是否应跳过该目录条目
+///
+/// 跳过：
+/// - 任何点开头的目录（`.obsidian` / `.trash` / `.git` / `.DS_Store` …）— 但**根目录本身**
+///   即使是 `.foo` 也不跳，因为用户主动选了它
+/// - `node_modules`（OB vault 里很少见，但偶尔有人把代码目录混入）
+///
+/// 文件不在这里过滤；文件层的 `.md` 后缀过滤交给上游 `.filter` 链。
+fn should_skip_dir_entry(entry: &walkdir::DirEntry) -> bool {
+    if entry.depth() == 0 {
+        return false;
+    }
+    if !entry.file_type().is_dir() {
+        return false;
+    }
+    let name = match entry.file_name().to_str() {
+        Some(n) => n,
+        None => return false,
+    };
+    name.starts_with('.') || name == "node_modules"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skip_dot_dirs() {
+        // 用临时目录构造，避免依赖项目内文件
+        let tmp = std::env::temp_dir().join(format!("kb-import-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::create_dir_all(tmp.join(".obsidian")).unwrap();
+        std::fs::create_dir_all(tmp.join(".trash")).unwrap();
+        std::fs::create_dir_all(tmp.join("regular")).unwrap();
+        std::fs::create_dir_all(tmp.join("node_modules")).unwrap();
+        std::fs::write(tmp.join(".obsidian/workspace.md"), "x").unwrap();
+        std::fs::write(tmp.join(".trash/old.md"), "x").unwrap();
+        std::fs::write(tmp.join("regular/keep.md"), "x").unwrap();
+        std::fs::write(tmp.join("node_modules/lib.md"), "x").unwrap();
+        std::fs::write(tmp.join("root.md"), "x").unwrap();
+
+        let mds: Vec<_> = WalkDir::new(&tmp)
+            .into_iter()
+            .filter_entry(|e| !should_skip_dir_entry(e))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(mds.contains(&"root.md".to_string()));
+        assert!(mds.contains(&"keep.md".to_string()));
+        assert!(!mds.iter().any(|n| n == "workspace.md"));
+        assert!(!mds.iter().any(|n| n == "old.md"));
+        assert!(!mds.iter().any(|n| n == "lib.md"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

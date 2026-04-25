@@ -7,6 +7,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { Mathematics } from "@tiptap/extension-mathematics";
 import Typography from "@tiptap/extension-typography";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
@@ -37,6 +38,156 @@ import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
+
+/**
+ * T-011 自定义 markdown → Math 节点迁移
+ *
+ * 官方 `migrateMathStrings` 只处理单行 `$..$` 行内公式，且 regex 会把 `$$expr$$`
+ * 错误捕获成内层 `$expr$`。本项目要兼容 OB markdown，行内 + 多行块级都要支持，
+ * 因此重写一遍：
+ *   1. 整段（textblock 的 textContent）匹配 `$$\n*expr\n*$$` → 替换整个段落为 blockMath
+ *   2. 否则扫文本节点，按 inline `$..$` 替换（避开 `$10` 货币、`$$` 双号边界）
+ *
+ * 倒序应用替换避免位置漂移；不写入 history（迁移不应被撤销到原始 markdown）。
+ *
+ * 安全保证：失败时不修改 doc（`tr.docChanged` 检查）；KaTeX 渲染若 throw，
+ * extension 配的 `throwOnError: false`（默认）会显示错误提示而非崩溃编辑器。
+ */
+function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const schema: any = editor.schema;
+  const blockMath = schema.nodes.blockMath;
+  const inlineMath = schema.nodes.inlineMath;
+  if (!blockMath && !inlineMath) return;
+
+  const tr = editor.state.tr;
+  type Replace = { from: number; to: number; latex: string; kind: "block" | "inline" };
+  const replaces: Replace[] = [];
+
+  // ─── 规则 0：跨段落多行块级 — 顶层连续 paragraph 形如 $$ ... $$ ───
+  // tiptap-markdown 把 `$$\nmatrix\n$$` 拆成多个 <p>，单段落 regex 抓不到，
+  // 这里在 doc 顶层扫 children，找到 `^\s*$$` 起始段 → 直到下一个 `^$$\s*$` 段，
+  // 把这一段范围整体替换为 blockMath
+  if (blockMath) {
+    const docNode = tr.doc;
+    const topChildren: { node: import("@tiptap/pm/model").Node; from: number }[] = [];
+    docNode.forEach((child, offset) => {
+      topChildren.push({ node: child, from: offset });
+    });
+    const consumed = new Set<number>();
+    for (let i = 0; i < topChildren.length; i++) {
+      if (consumed.has(i)) continue;
+      const c = topChildren[i];
+      if (!c.node.isTextblock) continue;
+      const t = c.node.textContent.trim();
+      if (!t.startsWith("$$")) continue;
+
+      // 单段就闭合（如 `$$expr$$`）
+      const single = /^\$\$([\s\S]+?)\$\$$/.exec(t);
+      if (single) {
+        replaces.push({
+          from: c.from,
+          to: c.from + c.node.nodeSize,
+          latex: single[1].trim(),
+          kind: "block",
+        });
+        consumed.add(i);
+        continue;
+      }
+
+      // 段首是 `$$`（可能仅 `$$`，也可能 `$$expr...`）但不闭合 → 找闭合段
+      // 提取段首 `$$` 之后的内容（可能为空）
+      const firstChunk = t.replace(/^\$\$/, "");
+      const collected: string[] = [];
+      if (firstChunk) collected.push(firstChunk);
+      let endIdx = -1;
+      let lastChunk = "";
+      for (let j = i + 1; j < topChildren.length; j++) {
+        const next = topChildren[j];
+        if (!next.node.isTextblock) continue;
+        const nt = next.node.textContent.trim();
+        if (nt.endsWith("$$")) {
+          // 闭合段
+          const beforeClose = nt.replace(/\$\$$/, "");
+          if (beforeClose) lastChunk = beforeClose;
+          endIdx = j;
+          break;
+        }
+        collected.push(nt);
+        // 防止无限扫描：超过 50 段未闭合视为不是块级公式
+        if (j - i > 50) break;
+      }
+      if (endIdx < 0) continue; // 没找到闭合，放弃
+
+      if (lastChunk) collected.push(lastChunk);
+      const latex = collected.join("\n").trim();
+      if (!latex) continue;
+      const endChild = topChildren[endIdx];
+      replaces.push({
+        from: c.from,
+        to: endChild.from + endChild.node.nodeSize,
+        latex,
+        kind: "block",
+      });
+      for (let k = i; k <= endIdx; k++) consumed.add(k);
+    }
+  }
+
+  // ─── 规则 1 + 2：单段落内的块级 / 行内（与上面跨段落不重叠的部分） ───
+  // 用 set 记录跨段落规则吃掉的段范围，避免重复处理
+  const blockedRanges = replaces
+    .filter((r) => r.kind === "block")
+    .map((r) => [r.from, r.to] as [number, number]);
+
+  function isInBlockedRange(pos: number): boolean {
+    return blockedRanges.some(([f, t]) => pos >= f && pos < t);
+  }
+
+  tr.doc.descendants((node, pos) => {
+    if (!node.isTextblock) return;
+    if (isInBlockedRange(pos)) return;
+    const text = node.textContent;
+    if (!text || !text.includes("$")) return;
+
+    if (!inlineMath) return;
+
+    // 规则 2：行内公式 — `$..$`，避开 `$N` 数字（货币）和 `$$` 双号
+    const inlineRe = /(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)(?!\d)/g;
+    const textStartInDoc = pos + 1;
+    let m: RegExpExecArray | null;
+    while ((m = inlineRe.exec(text)) !== null) {
+      const matchedText = m[0];
+      const latex = m[1];
+      replaces.push({
+        from: textStartInDoc + m.index,
+        to: textStartInDoc + m.index + matchedText.length,
+        latex,
+        kind: "inline",
+      });
+    }
+  });
+
+  if (replaces.length === 0) return;
+
+  // 倒序应用，避免前面的替换让后面的 from/to 错位
+  const sorted = replaces.sort((a, b) => b.from - a.from);
+  for (const r of sorted) {
+    try {
+      if (r.kind === "block") {
+        tr.replaceWith(r.from, r.to, blockMath.create({ latex: r.latex }));
+      } else {
+        tr.replaceWith(r.from, r.to, inlineMath.create({ latex: r.latex }));
+      }
+    } catch (e) {
+      console.warn("[math] migrate replace skipped:", r, e);
+    }
+  }
+
+  if (tr.docChanged) {
+    tr.setMeta("addToHistory", false);
+    editor.view.dispatch(tr);
+  }
+}
 
 /**
  * 从 Clipboard/DataTransfer 收集所有文件，按 predicate 筛选。
@@ -400,6 +551,8 @@ export function TiptapEditor({
       }),
       Underline,
       CodeBlockLowlight.configure({ lowlight }),
+      // T-011: LaTeX 公式渲染（行内 $...$、块级 $$...$$，KaTeX 后端）
+      Mathematics,
       Typography,
       Table.configure({
         resizable: true,
@@ -432,6 +585,16 @@ export function TiptapEditor({
       }),
     ],
     content,
+    onCreate: ({ editor }) => {
+      // T-011: 初始内容里如果含 $..$ / $$..$$ 字面量，编辑器创建后立即升级为 math 节点
+      // 用自定义 migrate 而非官方 `migrateMathStrings`：官方只处理单行 $..$ 且会
+      // 错误捕获 $$..$$，参见 migrateOpenMathStrings 文档
+      try {
+        migrateOpenMathStrings(editor);
+      } catch (e) {
+        console.warn("[math] initial migrate failed:", e);
+      }
+    },
     onUpdate: ({ editor }) => {
       if (isExternalUpdate.current) return;
       pendingEditorRef.current = editor;
@@ -451,10 +614,19 @@ export function TiptapEditor({
     },
     editorProps: {
       handlePaste: (_view, event) => {
-        const images = collectImageFiles(event.clipboardData);
-        if (images.length > 0) {
-          handleImageFiles(images, editor);
-          return true;
+        // Excel / Word / WPS 复制时剪贴板会同时包含 text/html、text/plain 和 image/png
+        // （Excel 自动生成的表格位图截图）。若无条件走图片分支，表格会变成一张图。
+        // 所以只在「剪贴板里没有任何文本/HTML，纯图片」时才当作图片处理；
+        // 有文本/HTML 时返回 false 让 ProseMirror 走默认 HTML/纯文本解析（表格可被 Tiptap Table 扩展接住）。
+        const dt = event.clipboardData;
+        const types = Array.from(dt?.types ?? []);
+        const hasText = types.includes("text/html") || types.includes("text/plain");
+        if (!hasText) {
+          const images = collectImageFiles(dt);
+          if (images.length > 0) {
+            handleImageFiles(images, editor);
+            return true;
+          }
         }
         return false;
       },
@@ -519,6 +691,13 @@ export function TiptapEditor({
     if (content !== current) {
       isExternalUpdate.current = true;
       editor.commands.setContent(content, { emitUpdate: false });
+      // T-011: 把刚 setContent 进来的 markdown 里的 $..$ / $$..$$ 升级成 math 节点
+      // tiptap-markdown 解析后是普通文本，自定义 migrate 同时处理行内 + 多行块级
+      try {
+        migrateOpenMathStrings(editor);
+      } catch (e) {
+        console.warn("[math] migrate failed:", e);
+      }
       isExternalUpdate.current = false;
     }
   }, [content, editor]);

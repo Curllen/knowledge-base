@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Tooltip, Badge, theme as antdTheme } from "antd";
 import {
@@ -94,6 +94,13 @@ export function ActivityBar() {
   const setSidePanelVisible = useAppStore((s) => s.setSidePanelVisible);
   const toggleSidePanel = useAppStore((s) => s.toggleSidePanel);
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
+  const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
+
+  // 启动时拉一次紧急任务数，让待办 Badge 在进应用时就显示正确数字
+  // （之后由任务页/各操作主动调 refreshTaskStats 维持新鲜）
+  useEffect(() => {
+    refreshTaskStats();
+  }, [refreshTaskStats]);
 
   // 以 URL 为准反推当前高亮（避免 store.activeView 与 URL 漂移时 UI 不一致）
   const highlightView: ActiveView | null = useMemo(

@@ -99,6 +99,31 @@ impl Database {
         Ok(affected > 0)
     }
 
+    /// 按名字获取标签 id；不存在则创建。导入流程使用。
+    ///
+    /// 名字会做 trim；空名字直接报错而不是默默忽略。
+    pub fn get_or_create_tag_by_name(&self, name: &str) -> Result<i64, AppError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput("标签名不能为空".into()));
+        }
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        // 先查
+        if let Ok(id) = conn.query_row(
+            "SELECT id FROM tags WHERE name = ?1",
+            params![trimmed],
+            |row| row.get::<_, i64>(0),
+        ) {
+            return Ok(id);
+        }
+        // 再建
+        conn.execute(
+            "INSERT INTO tags (name, color) VALUES (?1, NULL)",
+            params![trimmed],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
     /// 给笔记添加标签
     pub fn add_tag_to_note(&self, note_id: i64, tag_id: i64) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
-import { taskApi } from "@/lib/api";
+import { taskApi, systemApi } from "@/lib/api";
+import type { SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
 /**
@@ -69,6 +70,13 @@ interface AppStore {
   sidePanelVisible: boolean;
   /** 搜索视图：最近搜索关键词（最新在前，最多 RECENT_SEARCHES_MAX 条，持久化） */
   recentSearches: string[];
+  /**
+   * 当前进程的系统信息（含多开实例编号 + 数据目录）。
+   * null = 启动时还没拉到；UI 据此渲染实例徽章
+   */
+  instanceInfo: SystemInfo | null;
+  /** 启动时拉一次后端 system_info；失败静默（标识不是关键路径） */
+  loadInstanceInfo: () => Promise<void>;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -132,6 +140,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
   recentSearches: [],
+  instanceInfo: null,
+  loadInstanceInfo: async () => {
+    try {
+      const info = await systemApi.getSystemInfo();
+      set({ instanceInfo: info });
+    } catch {
+      // 静默：实例徽章不是关键路径，拉失败就不显示
+    }
+  },
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;

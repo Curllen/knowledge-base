@@ -35,7 +35,7 @@ import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
-import { SyncSection } from "@/components/settings/SyncSection";
+import { SyncTabs } from "@/components/settings/SyncTabs";
 import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
@@ -1068,7 +1068,7 @@ export default function SettingsPage() {
         />
       </Card>
 
-      <SyncSection />
+      <SyncTabs />
 
       {/* 维护：孤儿图片清理 */}
       <Card

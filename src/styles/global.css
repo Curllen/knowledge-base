@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "./themes.css";
+/* T-011: KaTeX 公式渲染 — Mathematics 扩展 + 行内 $...$ / 块级 $$...$$ */
+@import "katex/dist/katex.min.css";
 
 :root {
   --sidebar-width: 220px;
@@ -307,6 +309,162 @@ body,
   font-size: inherit;
   color: inherit;
 }
+
+/* ─── T-010 代码块语法高亮（lowlight 产出 .hljs-* token） ───
+   亮色默认；深色主题在下方做覆盖。
+   颜色挑选原则：
+   - 与正文 `--ant-color-text` 保持适当对比度（>= 4.5:1 in 浅色背景）
+   - 不用纯黑 / 纯白，留呼吸感；语义上：紫=控制流、蓝=类型/函数、青=变量、绿=字符串、橙=数字、灰=注释 */
+.tiptap pre code .hljs-keyword,
+.tiptap pre code .hljs-selector-tag,
+.tiptap pre code .hljs-section,
+.ai-markdown pre code .hljs-keyword,
+.ai-markdown pre code .hljs-selector-tag,
+.ai-markdown pre code .hljs-section { color: #8250df; font-weight: 600; }
+.tiptap pre code .hljs-built_in,
+.tiptap pre code .hljs-type,
+.tiptap pre code .hljs-class .hljs-title,
+.tiptap pre code .hljs-title.class_,
+.tiptap pre code .hljs-title.function_,
+.tiptap pre code .hljs-title,
+.ai-markdown pre code .hljs-built_in,
+.ai-markdown pre code .hljs-type,
+.ai-markdown pre code .hljs-title { color: #0550ae; }
+.tiptap pre code .hljs-string,
+.tiptap pre code .hljs-regexp,
+.tiptap pre code .hljs-attr,
+.tiptap pre code .hljs-attribute,
+.ai-markdown pre code .hljs-string,
+.ai-markdown pre code .hljs-regexp,
+.ai-markdown pre code .hljs-attr,
+.ai-markdown pre code .hljs-attribute { color: #0a7d3b; }
+.tiptap pre code .hljs-number,
+.tiptap pre code .hljs-literal,
+.tiptap pre code .hljs-meta,
+.tiptap pre code .hljs-link,
+.ai-markdown pre code .hljs-number,
+.ai-markdown pre code .hljs-literal,
+.ai-markdown pre code .hljs-meta,
+.ai-markdown pre code .hljs-link { color: #b45309; }
+.tiptap pre code .hljs-variable,
+.tiptap pre code .hljs-template-variable,
+.tiptap pre code .hljs-name,
+.tiptap pre code .hljs-symbol,
+.tiptap pre code .hljs-bullet,
+.tiptap pre code .hljs-tag,
+.tiptap pre code .hljs-selector-class,
+.tiptap pre code .hljs-selector-id,
+.ai-markdown pre code .hljs-variable,
+.ai-markdown pre code .hljs-template-variable,
+.ai-markdown pre code .hljs-name,
+.ai-markdown pre code .hljs-symbol,
+.ai-markdown pre code .hljs-tag,
+.ai-markdown pre code .hljs-selector-class,
+.ai-markdown pre code .hljs-selector-id { color: #116329; }
+.tiptap pre code .hljs-comment,
+.tiptap pre code .hljs-quote,
+.tiptap pre code .hljs-doctag,
+.ai-markdown pre code .hljs-comment,
+.ai-markdown pre code .hljs-quote,
+.ai-markdown pre code .hljs-doctag { color: #6e7781; font-style: italic; }
+.tiptap pre code .hljs-emphasis,
+.ai-markdown pre code .hljs-emphasis { font-style: italic; }
+.tiptap pre code .hljs-strong,
+.ai-markdown pre code .hljs-strong { font-weight: bold; }
+.tiptap pre code .hljs-deletion,
+.ai-markdown pre code .hljs-deletion {
+  color: #82071e;
+  background-color: rgba(255, 129, 130, 0.18);
+}
+.tiptap pre code .hljs-addition,
+.ai-markdown pre code .hljs-addition {
+  color: #116329;
+  background-color: rgba(46, 160, 67, 0.18);
+}
+
+/* 深色主题下的高对比覆盖（覆盖 dark-mocha / dark-starry） */
+[data-theme="dark-mocha"] .tiptap pre code .hljs-keyword,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-selector-tag,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-section,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-keyword,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-selector-tag,
+[data-theme="dark-starry"] .tiptap pre code .hljs-keyword,
+[data-theme="dark-starry"] .tiptap pre code .hljs-selector-tag,
+[data-theme="dark-starry"] .tiptap pre code .hljs-section,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-keyword,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-selector-tag { color: #d2a8ff; }
+[data-theme="dark-mocha"] .tiptap pre code .hljs-built_in,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-type,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-title,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-built_in,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-type,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-title,
+[data-theme="dark-starry"] .tiptap pre code .hljs-built_in,
+[data-theme="dark-starry"] .tiptap pre code .hljs-type,
+[data-theme="dark-starry"] .tiptap pre code .hljs-title,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-built_in,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-type,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-title { color: #79c0ff; }
+[data-theme="dark-mocha"] .tiptap pre code .hljs-string,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-regexp,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-attr,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-attribute,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-string,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-regexp,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-attr,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-attribute,
+[data-theme="dark-starry"] .tiptap pre code .hljs-string,
+[data-theme="dark-starry"] .tiptap pre code .hljs-regexp,
+[data-theme="dark-starry"] .tiptap pre code .hljs-attr,
+[data-theme="dark-starry"] .tiptap pre code .hljs-attribute,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-string,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-regexp,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-attr,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-attribute { color: #a5d6ff; }
+[data-theme="dark-mocha"] .tiptap pre code .hljs-number,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-literal,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-meta,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-number,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-literal,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-meta,
+[data-theme="dark-starry"] .tiptap pre code .hljs-number,
+[data-theme="dark-starry"] .tiptap pre code .hljs-literal,
+[data-theme="dark-starry"] .tiptap pre code .hljs-meta,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-number,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-literal,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-meta { color: #ffa657; }
+[data-theme="dark-mocha"] .tiptap pre code .hljs-variable,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-template-variable,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-name,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-symbol,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-tag,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-variable,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-template-variable,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-name,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-symbol,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-tag,
+[data-theme="dark-starry"] .tiptap pre code .hljs-variable,
+[data-theme="dark-starry"] .tiptap pre code .hljs-template-variable,
+[data-theme="dark-starry"] .tiptap pre code .hljs-name,
+[data-theme="dark-starry"] .tiptap pre code .hljs-symbol,
+[data-theme="dark-starry"] .tiptap pre code .hljs-tag,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-variable,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-template-variable,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-name,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-symbol,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-tag { color: #7ee787; }
+[data-theme="dark-mocha"] .tiptap pre code .hljs-comment,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-quote,
+[data-theme="dark-mocha"] .tiptap pre code .hljs-doctag,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-comment,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-quote,
+[data-theme="dark-mocha"] .ai-markdown pre code .hljs-doctag,
+[data-theme="dark-starry"] .tiptap pre code .hljs-comment,
+[data-theme="dark-starry"] .tiptap pre code .hljs-quote,
+[data-theme="dark-starry"] .tiptap pre code .hljs-doctag,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-comment,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-quote,
+[data-theme="dark-starry"] .ai-markdown pre code .hljs-doctag { color: #8b949e; }
 
 /* 行内代码：低对比淡色，和正文融合 */
 .tiptap code {

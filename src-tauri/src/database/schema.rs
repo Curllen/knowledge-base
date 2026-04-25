@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 23;
+pub const SCHEMA_VERSION: i32 = 24;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -53,6 +53,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             20 => migrate_v20_to_v21(conn)?,
             21 => migrate_v21_to_v22(conn)?,
             22 => migrate_v22_to_v23(conn)?,
+            23 => migrate_v23_to_v24(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -932,5 +933,67 @@ fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
     // vault 相关配置是可选的——不预置，在首次 setup 时由代码写入
 
     set_version(conn, 23)?;
+    Ok(())
+}
+
+/// v23 → v24: T-024 同步架构 V1
+///
+/// 新表 `sync_backends`：用户配置的同步后端列表（可同时挂多个）
+///   - `id` 自增主键
+///   - `kind`：local / webdav / s3 / git
+///   - `name`：用户起的名字（如"我的坚果云"）
+///   - `config_json`：backend 专属配置（路径 / endpoint / bucket / 凭据等，凭据已用 vault 加密）
+///   - `enabled` / `auto_sync` / `created_at`
+///
+/// 新表 `sync_remote_state`：每条笔记 × 每个 backend 的同步状态
+///   - 唯一键 (backend_id, note_id)
+///   - `last_synced_hash`：上次同步时的笔记内容 SHA-256（供 diff 用）
+///   - `last_synced_ts`：上次同步成功时间（last-write-wins 的依据之一）
+///   - `remote_path`：在 backend 上的相对路径（如 "notes/<uuid>.md"）
+///   - `tombstone`：本地已删除标记（同步后告诉远端也删，远端确认后才能从表里移除）
+///
+/// 设计要点：
+/// 1. **不动 notes 表本身**：所有同步元数据放独立表，未启用同步的用户零成本
+/// 2. **per-backend 状态独立**：用户可以同时配 LocalPath + WebDAV + S3，互不干扰
+/// 3. **soft delete 走 tombstone**：硬删笔记时同步表保留 tombstone 行，下次 sync 推出删除
+fn migrate_v23_to_v24(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v23 -> v24 (T-024 同步 V1: sync_backends + sync_remote_state)");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_backends (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind         TEXT    NOT NULL,             -- 'local' | 'webdav' | 's3' | 'git'
+            name         TEXT    NOT NULL,
+            config_json  TEXT    NOT NULL DEFAULT '{}',
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            auto_sync    INTEGER NOT NULL DEFAULT 0,
+            sync_interval_min INTEGER NOT NULL DEFAULT 30,
+            last_push_ts TEXT,
+            last_pull_ts TEXT,
+            created_at   DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at   DATETIME NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_remote_state (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            backend_id         INTEGER NOT NULL,
+            note_id            INTEGER NOT NULL,
+            remote_path        TEXT    NOT NULL,
+            last_synced_hash   TEXT    NOT NULL,
+            last_synced_ts     TEXT    NOT NULL,
+            tombstone          INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (backend_id, note_id),
+            FOREIGN KEY (backend_id) REFERENCES sync_backends(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_remote_state_backend
+            ON sync_remote_state(backend_id);
+        CREATE INDEX IF NOT EXISTS idx_sync_remote_state_note
+            ON sync_remote_state(note_id);
+        "#,
+    )?;
+
+    set_version(conn, 24)?;
     Ok(())
 }

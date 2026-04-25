@@ -56,6 +56,11 @@ import type {
   DraftNoteRequest,
   DraftNoteResponse,
   VaultStatus,
+  SyncBackend,
+  SyncBackendInput,
+  SyncManifestV1,
+  SyncPushResult,
+  SyncPullResult,
 } from "@/types";
 
 /** 系统相关 API */
@@ -479,6 +484,31 @@ export const syncApi = {
     invoke<SyncHistoryItem[]>("sync_list_history", { limit }),
   /** 唤醒自动同步调度器（配置变更后调用）*/
   schedulerReload: () => invoke<void>("sync_scheduler_reload"),
+};
+
+/**
+ * T-024 同步 V1 API（多端真同步：单笔记粒度 + 多 backend）
+ *
+ * 与 syncApi（V0 ZIP 备份）并存；用户可同时配置两套
+ */
+export const syncV1Api = {
+  listBackends: () => invoke<SyncBackend[]>("sync_v1_list_backends"),
+  getBackend: (id: number) =>
+    invoke<SyncBackend | null>("sync_v1_get_backend", { id }),
+  createBackend: (input: SyncBackendInput) =>
+    invoke<number>("sync_v1_create_backend", { input }),
+  updateBackend: (id: number, input: SyncBackendInput) =>
+    invoke<void>("sync_v1_update_backend", { id, input }),
+  deleteBackend: (id: number) =>
+    invoke<boolean>("sync_v1_delete_backend", { id }),
+  testConnection: (id: number) =>
+    invoke<void>("sync_v1_test_connection", { id }),
+  readRemoteManifest: (id: number) =>
+    invoke<SyncManifestV1 | null>("sync_v1_read_remote_manifest", { id }),
+  push: (id: number) => invoke<SyncPushResult>("sync_v1_push", { id }),
+  pull: (id: number) => invoke<SyncPullResult>("sync_v1_pull", { id }),
+  getLocalManifest: () =>
+    invoke<SyncManifestV1>("sync_v1_get_local_manifest"),
 };
 
 /** 待办任务 API */

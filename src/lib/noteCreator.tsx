@@ -51,10 +51,19 @@ export async function importMarkdownFlow(folderId: number | null): Promise<void>
     const result = await importApi.importSelected(paths, folderId);
     hide();
     if (result.imported > 0) {
-      message.success(
-        `成功导入 ${result.imported} 篇` +
-          (result.skipped > 0 ? `，跳过 ${result.skipped} 篇` : ""),
-      );
+      let msg = `成功导入 ${result.imported} 篇`;
+      if (result.skipped > 0) msg += `，跳过 ${result.skipped} 篇`;
+      if (result.tags_attached && result.tags_attached > 0) {
+        msg += `；自动关联 ${result.tags_attached} 条 frontmatter 标签`;
+      }
+      if (result.attachments_copied && result.attachments_copied > 0) {
+        msg += `；复制 ${result.attachments_copied} 张图`;
+      }
+      const missCount = result.attachments_missing?.length ?? 0;
+      if (missCount > 0) {
+        msg += `（${missCount} 张图缺失，详见日志）`;
+      }
+      message.success(msg);
     } else if (result.skipped > 0) {
       message.warning(`全部 ${result.skipped} 篇已跳过`);
     }

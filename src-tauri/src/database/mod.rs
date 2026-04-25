@@ -6,6 +6,7 @@ pub mod prompt;
 pub mod schema;
 pub mod search;
 pub mod sync;
+pub mod sync_v1;
 pub mod tags;
 pub mod tasks;
 pub mod templates;

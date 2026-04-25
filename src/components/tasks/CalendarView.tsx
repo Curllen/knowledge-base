@@ -40,29 +40,37 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
 
   const grid = useMemo(() => buildGrid(anchor), [anchor]);
   const todayYmd = dayjs().format("YYYY-MM-DD");
-  const activeTasks = tasks.filter((t) => t.status === 0);
 
-  // 按 due_date 聚合（只取日期部分，忽略时分）
+  // 按 due_date 聚合（含已完成）；同一天里"未完成在前、已完成在后"，
+  // 同状态内按优先级排序，便于一眼看出当日重点
   const tasksByDate = useMemo(() => {
     const map: Record<string, Task[]> = {};
-    for (const t of activeTasks) {
+    for (const t of tasks) {
       if (!t.due_date) continue;
       const key = t.due_date.slice(0, 10);
       (map[key] ||= []).push(t);
     }
+    for (const key of Object.keys(map)) {
+      map[key].sort((a, b) => {
+        if (a.status !== b.status) return a.status - b.status;
+        return a.priority - b.priority;
+      });
+    }
     return map;
-  }, [activeTasks]);
+  }, [tasks]);
 
-  const undated = activeTasks.filter((t) => !t.due_date);
+  // "未安排日期"抽屉只放进行中（已完成且无日期的没意义；放进来还会让抽屉很长）
+  const undated = tasks.filter((t) => !t.due_date && t.status === 0);
 
   const stats = useMemo(() => {
+    const active = tasks.filter((t) => t.status === 0);
     return {
-      urgent: activeTasks.filter((t) => t.priority === 0).length,
-      normal: activeTasks.filter((t) => t.priority === 1).length,
-      low: activeTasks.filter((t) => t.priority === 2).length,
+      urgent: active.filter((t) => t.priority === 0).length,
+      normal: active.filter((t) => t.priority === 1).length,
+      low: active.filter((t) => t.priority === 2).length,
       done: tasks.filter((t) => t.status === 1).length,
     };
-  }, [activeTasks, tasks]);
+  }, [tasks]);
 
   async function handleDropOnDate(e: React.DragEvent, ymd: string) {
     e.preventDefault();
@@ -216,25 +224,38 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                 </div>
                 <div className="space-y-1 mt-1">
                   {items.slice(0, 4).map((t) => {
+                    const isDone = t.status === 1;
                     const bar = priorityColor(t.priority, token);
+                    // 已完成：灰底 + 灰字 + 删除线；不再用优先级色（避免视觉抢戏），
+                    // 也禁止拖拽到其他日期（避免不小心修改完成任务的截止日）
                     return (
-                      <Tooltip key={t.id} title={t.title}>
+                      <Tooltip key={t.id} title={isDone ? `${t.title}（已完成）` : t.title}>
                         <div
-                          draggable
-                          onDragStart={(e) => {
-                            e.stopPropagation();
-                            e.dataTransfer.effectAllowed = "move";
-                            e.dataTransfer.setData("text/plain", String(t.id));
-                          }}
+                          draggable={!isDone}
+                          onDragStart={
+                            isDone
+                              ? undefined
+                              : (e) => {
+                                  e.stopPropagation();
+                                  e.dataTransfer.effectAllowed = "move";
+                                  e.dataTransfer.setData("text/plain", String(t.id));
+                                }
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
                             onEdit(t);
                           }}
                           className="truncate px-1 py-0.5 rounded text-[10px] leading-tight cursor-pointer transition hover:opacity-80"
                           style={{
-                            background: `${bar}1a`,
-                            color: bar,
-                            borderLeft: `2px solid ${bar}`,
+                            background: isDone
+                              ? token.colorFillTertiary
+                              : `${bar}1a`,
+                            color: isDone ? token.colorTextTertiary : bar,
+                            borderLeft: `2px solid ${
+                              isDone ? token.colorTextQuaternary : bar
+                            }`,
+                            textDecoration: isDone ? "line-through" : "none",
+                            opacity: isDone ? 0.75 : 1,
                           }}
                         >
                           {t.title}

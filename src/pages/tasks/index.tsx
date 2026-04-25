@@ -155,38 +155,52 @@ function filterToStatusArg(filter: SmartFilter): 0 | 1 | undefined {
   return 0;
 }
 
-/** 本地再过滤：基于 URL 的智能筛选，对 taskApi 返回的 Task[] 二次过滤 */
+/** 本地再过滤：基于 URL 的智能筛选，对 taskApi 返回的 Task[] 二次过滤
+ *
+ * 重要：除 "todo" / "done" / "all" 外，所有维度都强制 status === 0（仅未完成）。
+ * 因为"已完成的逾期"、"已完成的紧急"在用户语义里都不成立——完成了就不是逾期了。
+ * 日历视图为支持"已完成置灰显示"会拉全部任务进来，依靠这里的过滤把非 todo 维度
+ * 收敛为"未完成"；不加这个限制，会出现 filter=overdue 日历里冒出大量历史已完成
+ * 任务的 bug。
+ */
 function applySmartFilter(tasks: Task[], filter: SmartFilter): Task[] {
   const today = ymdLocal(new Date());
   const weekEnd = ymdLocal(new Date(Date.now() + 7 * 86400000));
   switch (filter) {
     case "overdue":
       return tasks.filter(
-        (t) => t.due_date && dueDateOnly(t.due_date) < today,
+        (t) =>
+          t.status === 0 && t.due_date && dueDateOnly(t.due_date) < today,
       );
     case "today":
       return tasks.filter(
-        (t) => t.due_date && dueDateOnly(t.due_date) === today,
+        (t) =>
+          t.status === 0 && t.due_date && dueDateOnly(t.due_date) === today,
       );
     case "week":
       return tasks.filter((t) => {
-        if (!t.due_date) return false;
+        if (t.status !== 0 || !t.due_date) return false;
         const day = dueDateOnly(t.due_date);
         return day > today && day <= weekEnd;
       });
     case "no-date":
-      return tasks.filter((t) => !t.due_date);
+      return tasks.filter((t) => t.status === 0 && !t.due_date);
     case "urgent":
-      return tasks.filter((t) => t.priority === 0);
+      return tasks.filter((t) => t.status === 0 && t.priority === 0);
     case "normal":
-      return tasks.filter((t) => t.priority === 1);
+      return tasks.filter((t) => t.status === 0 && t.priority === 1);
     case "low":
-      return tasks.filter((t) => t.priority === 2);
+      return tasks.filter((t) => t.status === 0 && t.priority === 2);
     case "recurring":
-      return tasks.filter((t) => t.repeat_kind && t.repeat_kind !== "none");
+      return tasks.filter(
+        (t) => t.status === 0 && t.repeat_kind && t.repeat_kind !== "none",
+      );
     case "linked":
-      return tasks.filter((t) => t.links && t.links.length > 0);
+      return tasks.filter(
+        (t) => t.status === 0 && t.links && t.links.length > 0,
+      );
     default:
+      // todo / done / all：保持后端 status 过滤的结果（todo 拉全部用于日历回顾）
       return tasks;
   }
 }
@@ -205,7 +219,7 @@ function filterTitle(filter: SmartFilter): string {
     case "low": return "低优先级";
     case "recurring": return "循环任务";
     case "linked": return "有关联任务";
-    default: return "待办";
+    default: return "全部任务";
   }
 }
 
@@ -246,11 +260,20 @@ export default function TasksPage() {
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
-      // 看板 / 日历视图只展示未完成；列表视图按 URL filter 的 status 维度过滤
-      const statusArg =
-        viewMode === "kanban" || viewMode === "calendar"
-          ? 0
-          : filterToStatusArg(filter);
+      // 数据范围策略：
+      //   · 日历视图：拉全部（含已完成），让用户回顾历史完成情况；CalendarView 内部把
+      //     已完成置灰、未完成正常显示。
+      //   · 看板视图：仅未完成（看板 Done 列改造另议）。
+      //   · 列表视图：filter=todo（"全部任务"默认入口）拉全部，已完成进底部折叠区；
+      //     其他 filter（如 done / urgent / today...）维持原 status 行为。
+      let statusArg: 0 | 1 | undefined;
+      if (viewMode === "calendar") {
+        statusArg = undefined;
+      } else if (viewMode === "kanban") {
+        statusArg = 0;
+      } else {
+        statusArg = filter === "todo" ? undefined : filterToStatusArg(filter);
+      }
       const list = await taskApi.list({
         status: statusArg,
         keyword: keyword.trim() || undefined,
@@ -271,6 +294,18 @@ export default function TasksPage() {
   }, [loadTasks]);
 
   const grouped = useMemo(() => groupTasks(tasks), [tasks]);
+
+  // "全部任务"视图底部折叠区只展示最近 7 天完成的（避免历史归档塞满主区）；
+  // 其他 filter（如 done）下不裁剪，由其自有渲染分支处理
+  const recentDoneTasks = useMemo(() => {
+    if (filter !== "todo") return grouped.done;
+    const cutoff = ymdLocal(new Date(Date.now() - 7 * 86400000));
+    return grouped.done.filter((t) => {
+      const day = t.completed_at?.slice(0, 10);
+      // 旧数据可能缺 completed_at，宽容保留以免"消失"
+      return !day || day >= cutoff;
+    });
+  }, [grouped.done, filter]);
 
   async function handleToggle(task: Task) {
     try {
@@ -471,18 +506,57 @@ export default function TasksPage() {
               token={token}
             />
           )}
-          {grouped.done.length > 0 && (
-            <TaskSection
-              title="已完成"
-              count={grouped.done.length}
-              tasks={grouped.done}
-              onToggle={handleToggle}
-              onDelete={handleDelete}
-              onEdit={setEditing}
-              onOpenLink={handleOpenLink}
-              token={token}
-            />
-          )}
+          {filter === "todo"
+            ? recentDoneTasks.length > 0 && (
+                <TaskSection
+                  title={
+                    <span>
+                      已完成
+                      {grouped.done.length > recentDoneTasks.length && (
+                        <span
+                          style={{
+                            fontWeight: 400,
+                            color: token.colorTextTertiary,
+                            marginLeft: 6,
+                          }}
+                        >
+                          （最近 7 天 ·{" "}
+                          <a
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate("/tasks?filter=done");
+                            }}
+                            style={{ color: token.colorPrimary }}
+                          >
+                            查看全部 {grouped.done.length} 条
+                          </a>
+                          ）
+                        </span>
+                      )}
+                    </span>
+                  }
+                  count={recentDoneTasks.length}
+                  color={token.colorTextTertiary}
+                  tasks={recentDoneTasks}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                  onEdit={setEditing}
+                  onOpenLink={handleOpenLink}
+                  token={token}
+                />
+              )
+            : grouped.done.length > 0 && (
+                <TaskSection
+                  title="已完成"
+                  count={grouped.done.length}
+                  tasks={grouped.done}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                  onEdit={setEditing}
+                  onOpenLink={handleOpenLink}
+                  token={token}
+                />
+              )}
         </div>
       )}
 
@@ -523,7 +597,8 @@ export default function TasksPage() {
 }
 
 interface SectionProps {
-  title: string;
+  /** 支持 ReactNode 以便在标题里嵌"查看全部"等链接 */
+  title: React.ReactNode;
   count: number;
   icon?: React.ReactNode;
   color?: string;
@@ -533,6 +608,8 @@ interface SectionProps {
   onDelete: (t: Task) => void;
   onEdit: (t: Task) => void;
   onOpenLink: (l: Task["links"][number]) => void;
+  /** 显式隐藏标题的留口（备用） */
+  hideHeader?: boolean;
 }
 
 function TaskSection({
@@ -546,16 +623,19 @@ function TaskSection({
   onDelete,
   onEdit,
   onOpenLink,
+  hideHeader,
 }: SectionProps) {
   return (
     <section>
-      <div
-        className="text-xs font-semibold flex items-center gap-1 mb-2"
-        style={{ color: color ?? token.colorTextSecondary }}
-      >
-        {icon}
-        {title} · {count}
-      </div>
+      {!hideHeader && (
+        <div
+          className="text-xs font-semibold flex items-center gap-1 mb-2"
+          style={{ color: color ?? token.colorTextSecondary }}
+        >
+          {icon}
+          {title} · {count}
+        </div>
+      )}
       <div
         className="rounded-lg border"
         style={{

@@ -32,13 +32,20 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-tokio = { version = "1", features = ["sync", "fs", "io-util"] }
+tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread"] }
+# T-024b S3 协议 backend：支持 AWS S3 / 阿里云 OSS / 腾讯云 COS / Cloudflare R2 / MinIO
+# default-features = false 避免拉重型 tokio 依赖；用 tokio-rustls-tls + with-tokio
+rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
 tauri-plugin-dialog = "2"
 walkdir = "2"
 pulldown-cmark = "0.13.1"
 html2md = "0.2"
+# T-009 OB 整库导入：解析 markdown 头部 YAML frontmatter（tags / aliases / 等）
+serde_yml = "0.0.12"
+# T-009 OB 整库导入：识别 markdown / OB-wiki 形式的图片引用（`![](...)` / `![[...]]`）
+regex = "1"
 base64 = "0.22.1"
 pdf-extract = "0.9"
 # PDFium fallback（Chrome 同款 PDF 引擎）：pdf-extract 对中文 CMap（GBK-EUC-H 等）不支持，

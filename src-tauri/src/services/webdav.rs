@@ -179,6 +179,127 @@ impl WebDavClient {
         Ok(resp)
     }
 
+    /// T-024c: 上传内存字节流到指定相对路径（不需要先落盘文件）
+    ///
+    /// 路径里的目录不存在时，会先 MKCOL 递归创建。
+    pub async fn upload_bytes(&self, path: &str, bytes: Vec<u8>) -> Result<(), AppError> {
+        // 先确保父目录存在（WebDAV 要求 PUT 前父目录已存在）
+        if let Some(parent) = path.rsplit_once('/').map(|(p, _)| p) {
+            if !parent.is_empty() {
+                self.ensure_dir(parent).await?;
+            }
+        }
+
+        let resp = self
+            .client
+            .put(self.file_url(path))
+            .headers(self.headers())
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(CONTENT_LENGTH, bytes.len() as u64)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("上传失败: {}", e)))?;
+
+        Self::check_put_status(resp).await
+    }
+
+    /// T-024c: 递归创建 WebDAV 目录（MKCOL）
+    ///
+    /// 已存在时返回 405 Method Not Allowed，按成功处理。
+    pub async fn ensure_dir(&self, path: &str) -> Result<(), AppError> {
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            return Ok(());
+        }
+        // 自顶向下逐级 MKCOL，已存在的层会返回 405，忽略即可
+        let mut acc = String::new();
+        for seg in path.split('/').filter(|s| !s.is_empty()) {
+            if !acc.is_empty() {
+                acc.push('/');
+            }
+            acc.push_str(seg);
+            let url = format!("{}/{}", self.base_url, acc);
+            let resp = self
+                .client
+                .request(Method::from_bytes(b"MKCOL").unwrap(), &url)
+                .headers(self.headers())
+                .send()
+                .await
+                .map_err(|e| AppError::Custom(format!("创建目录失败: {}", e)))?;
+            let status = resp.status();
+            // 201 Created 或 405（已存在）都视为成功
+            if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
+            }
+            // 415 / 409 等，告诉用户具体错误
+            if !status.is_success() && status != StatusCode::METHOD_NOT_ALLOWED {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(AppError::Custom(format!(
+                    "MKCOL {} 失败 ({}): {}",
+                    acc, status, body
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// T-024c: 删除远端文件（404 视为成功）
+    ///
+    /// 给 WebdavBackend 的 SyncBackendImpl::delete_note 用；后者目前还没被调用（tombstone push 留给后续阶段）
+    #[allow(dead_code)]
+    pub async fn delete_file(&self, path: &str) -> Result<(), AppError> {
+        let resp = self
+            .client
+            .delete(self.file_url(path))
+            .headers(self.headers())
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("删除失败: {}", e)))?;
+
+        let status = resp.status();
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
+        }
+        if status == StatusCode::NOT_FOUND {
+            // 已经不在了，幂等
+            return Ok(());
+        }
+        if !status.is_success() && status != StatusCode::NO_CONTENT {
+            return Err(AppError::Custom(format!("删除失败 ({})", status)));
+        }
+        Ok(())
+    }
+
+    /// T-024c: 下载文件，404 时返回 None（用于"远端没有 manifest 时安全返回 None"）
+    pub async fn download_bytes_optional(
+        &self,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        let resp = self
+            .client
+            .get(self.file_url(path))
+            .headers(self.headers())
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("下载失败: {}", e)))?;
+        let status = resp.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
+        }
+        if !status.is_success() {
+            return Err(AppError::Custom(format!("下载失败，服务器返回 {}", status)));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+        Ok(Some(bytes.to_vec()))
+    }
+
     /// 列出目录下的文件名（PROPFIND Depth:1，用正则抽取 <d:href>）
     /// 返回的是基础文件名（不含路径），按字母序
     pub async fn list_files(&self) -> Result<Vec<String>, AppError> {

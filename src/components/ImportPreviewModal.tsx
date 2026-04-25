@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Modal, Radio, Checkbox, Typography, List, Tag, Collapse, Tooltip } from "antd";
-import { NotebookText, Folder as FolderIcon, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { NotebookText, Folder as FolderIcon, AlertTriangle, CheckCircle2, Sparkles } from "lucide-react";
 
 import type { ImportConflictPolicy, ScannedFile } from "@/types";
 
@@ -69,6 +69,28 @@ export function ImportPreviewModal({
       <div className="text-[13px] leading-7">
         <div className="mb-3">
           扫描 <Text code>{rootPath}</Text> 完成
+        </div>
+
+        {/* T-009: OB 兼容能力告知卡 */}
+        <div
+          className="mb-3 px-3 py-2 rounded text-[12px] leading-[22px]"
+          style={{
+            background: "var(--color-bg-subtle, #f6f9ff)",
+            border: "1px solid var(--color-border-subtle, #e0e7ff)",
+          }}
+        >
+          <div className="flex items-center gap-1.5 font-medium mb-0.5">
+            <Sparkles size={12} className="text-violet-500" />
+            <span>已自动启用 Obsidian 仓库兼容</span>
+          </div>
+          <div className="opacity-75">
+            跳过 <Text code style={{ fontSize: 11 }}>.obsidian</Text> /{" "}
+            <Text code style={{ fontSize: 11 }}>.trash</Text> 等隐藏目录 · 解析
+            笔记头部 <Text code style={{ fontSize: 11 }}>tags:</Text> 字段自动建标签 ·
+            复制 <Text code style={{ fontSize: 11 }}>attachments/</Text>{" "}
+            <Text code style={{ fontSize: 11 }}>assets/</Text>{" "}
+            <Text code style={{ fontSize: 11 }}>images/</Text> 里的图片并改写 wiki 链接
+          </div>
         </div>
 
         {/* 三桶统计 */}

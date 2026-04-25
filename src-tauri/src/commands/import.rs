@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::models::{ImportConflictPolicy, ImportResult, OpenMarkdownResult, ScannedFile};
 use crate::services;
@@ -33,6 +33,7 @@ pub fn import_selected_files(
     preserve_root: Option<bool>,
     policy: Option<ImportConflictPolicy>,
 ) -> Result<ImportResult, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     services::import::ImportService::import_selected_files(
         &state.db,
         &file_paths,
@@ -40,6 +41,7 @@ pub fn import_selected_files(
         root_path.as_deref(),
         preserve_root.unwrap_or(false),
         policy.unwrap_or_default(),
+        &app_data_dir,
         &app,
     )
     .map_err(|e| e.to_string())

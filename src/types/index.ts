@@ -9,8 +9,13 @@ export interface SystemInfo {
   os: string;
   arch: string;
   appVersion: string;
+  /** 当前实例的数据根目录（多开实例 = app_data_dir/instance-N，不是公共 app_data_dir） */
   dataDir: string;
   imagesDir: string;
+  /** 多开实例编号；null = 默认实例 */
+  instanceId: number | null;
+  /** 是否运行在 dev build 下（前端徽章追加 [DEV] 标识） */
+  isDev: boolean;
 }
 
 // ─── 笔记 ─────────────────────────────────────
@@ -306,6 +311,14 @@ export interface ImportResult {
   skipped: number;
   duplicated: number;
   errors: string[];
+  /** T-009: 自动关联的 frontmatter tag 条数（笔记 × 标签 笛卡尔次数） */
+  tags_attached?: number;
+  /** T-009: 解析到 frontmatter 的笔记数 */
+  frontmatter_parsed?: number;
+  /** T-009 Commit 2: 复制到 kb_assets/images 的图片张数 */
+  attachments_copied?: number;
+  /** T-009 Commit 2: 缺失的图片清单（"笔记标题: 原始引用"，已去重） */
+  attachments_missing?: string[];
 }
 
 /** 导入进度 */
@@ -626,4 +639,72 @@ export interface PromptTemplateInput {
   icon?: string | null;
   sortOrder?: number | null;
   enabled?: boolean | null;
+}
+
+// ─── T-024 同步 V1 ─────────────────────────────
+
+export type SyncBackendKind = "local" | "webdav" | "s3";
+
+export interface SyncBackend {
+  id: number;
+  kind: SyncBackendKind;
+  name: string;
+  configJson: string;
+  enabled: boolean;
+  autoSync: boolean;
+  syncIntervalMin: number;
+  lastPushTs: string | null;
+  lastPullTs: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SyncBackendInput {
+  kind: SyncBackendKind;
+  name: string;
+  configJson: string;
+  enabled?: boolean | null;
+  autoSync?: boolean | null;
+  syncIntervalMin?: number | null;
+}
+
+export interface ManifestEntry {
+  stableId: string;
+  title: string;
+  contentHash: string;
+  updatedAt: string;
+  remotePath: string;
+  tombstone: boolean;
+  folderPath: string;
+}
+
+export interface SyncManifestV1 {
+  manifestVersion: number;
+  appVersion: string;
+  device: string;
+  generatedAt: string;
+  entries: ManifestEntry[];
+}
+
+export interface SyncPushResult {
+  uploaded: number;
+  deletedRemote: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface SyncPullResult {
+  downloaded: number;
+  deletedLocal: number;
+  conflicts: number;
+  errors: string[];
+}
+
+export interface SyncV1ProgressEvent {
+  backendId: number;
+  /** "compute" | "diff" | "upload" | "download" | "manifest" | "apply" | "done" */
+  phase: string;
+  current: number;
+  total: number;
+  message: string;
 }

@@ -8,6 +8,9 @@ pub struct AppConfig {
 }
 
 /// 系统信息
+///
+/// `instance_id` / `is_dev` 用于 UI 区分多开实例（默认实例 = None；多开 = Some(N)）。
+/// `data_dir` 永远是当前实例的数据根目录（多开 = `app_data_dir/instance-N`），不是 app_data_dir。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
@@ -16,6 +19,10 @@ pub struct SystemInfo {
     pub app_version: String,
     pub data_dir: String,
     pub images_dir: String,
+    /// 多开实例编号；None = 默认实例
+    pub instance_id: Option<u32>,
+    /// 是否运行在 debug build 下（前端徽章追加 [DEV] 标识）
+    pub is_dev: bool,
 }
 
 // ─── 笔记 ─────────────────────────────────────
@@ -305,6 +312,18 @@ pub struct ImportResult {
     /// 按 Duplicate 策略新建的副本数
     pub duplicated: usize,
     pub errors: Vec<String>,
+    /// T-009: 从 frontmatter 解析并自动关联的标签条数（每个笔记 × 每个标签计 1）
+    #[serde(default)]
+    pub tags_attached: usize,
+    /// T-009: 成功解析到 frontmatter 的笔记数
+    #[serde(default)]
+    pub frontmatter_parsed: usize,
+    /// T-009 Commit 2: 复制到 kb_assets/images 的图片张数
+    #[serde(default)]
+    pub attachments_copied: usize,
+    /// T-009 Commit 2: 缺失的图片清单（"笔记标题: 原始引用"格式，已去重）
+    #[serde(default)]
+    pub attachments_missing: Vec<String>,
 }
 
 /// 导入进度（通过事件推送）
@@ -824,6 +843,141 @@ pub struct PromptTemplateInput {
     pub sort_order: Option<i32>,
     /// 省略视为启用
     pub enabled: Option<bool>,
+}
+
+// ─── T-024 同步架构 V1 ─────────────────────────
+
+/// 同步后端类型
+///
+/// `local` 写到用户磁盘上的某个目录（最简单、零网络风险，常用作"挂同步盘"路径）；
+/// `webdav` 走现有 WebDAV 客户端；`s3` / `git` 后续阶段实现
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncBackendKind {
+    Local,
+    Webdav,
+    S3,
+}
+
+/// 同步后端配置（DB 行）
+///
+/// `config_json` 内的字段随 `kind` 不同：
+/// - `Local`：`{"path": "..."}`
+/// - `Webdav`：`{"url": "...", "username": "...", "password_encrypted": "..."}`
+/// - `S3`：`{"endpoint": "...", "region": "...", "bucket": "...", "access_key": "...", "secret_key_encrypted": "..."}`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncBackend {
+    pub id: i64,
+    pub kind: SyncBackendKind,
+    pub name: String,
+    pub config_json: String,
+    pub enabled: bool,
+    pub auto_sync: bool,
+    pub sync_interval_min: i64,
+    pub last_push_ts: Option<String>,
+    pub last_pull_ts: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 创建/更新同步后端配置入参
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncBackendInput {
+    pub kind: SyncBackendKind,
+    pub name: String,
+    pub config_json: String,
+    pub enabled: Option<bool>,
+    pub auto_sync: Option<bool>,
+    pub sync_interval_min: Option<i64>,
+}
+
+/// 远端同步状态（DB 行，per-backend per-note）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRemoteState {
+    pub backend_id: i64,
+    pub note_id: i64,
+    pub remote_path: String,
+    pub last_synced_hash: String,
+    pub last_synced_ts: String,
+    pub tombstone: bool,
+}
+
+/// V1 同步 manifest 中的单条记录
+///
+/// 序列化为 manifest.json 上传到远端。设计要点：
+/// 1. **note_id 不直接用本地自增 id**：用 stable_uuid（笔记表加列存）防止多端 id 冲突
+///    - **本会话先用本地 id 当 stable_uuid**，T-024 后续阶段再加 uuid 列做严格去重
+/// 2. **content_hash 是 SHA-256(title + "\n" + body)**：标题改动也算变更
+/// 3. **tombstone**：删除的笔记保留一条 manifest 项让其他端知道要删
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestEntry {
+    /// 稳定 ID（v1 临时 = 本地笔记 id 的字符串形式）
+    pub stable_id: String,
+    pub title: String,
+    /// SHA-256(title + "\n" + content)，hex 小写
+    pub content_hash: String,
+    /// ISO-8601 / 本地时间字符串（来自 notes.updated_at）
+    pub updated_at: String,
+    /// 远端 .md 文件路径（相对 vault 根，正斜杠分隔）
+    pub remote_path: String,
+    /// 是否已删除（tombstone）
+    #[serde(default)]
+    pub tombstone: bool,
+    /// 文件夹路径（如 "工作/周报"）；根层为空串。导入时用来重建文件夹树
+    #[serde(default)]
+    pub folder_path: String,
+}
+
+/// V1 同步 manifest（远端 manifest.json 全文）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncManifestV1 {
+    /// manifest schema 版本（恒为 1）
+    pub manifest_version: u32,
+    /// 应用版本（生成 manifest 的客户端，仅供调试）
+    pub app_version: String,
+    /// 设备名（hostname；多端冲突排查用）
+    pub device: String,
+    /// 生成时间
+    pub generated_at: String,
+    /// 全部笔记条目（含 tombstone）
+    pub entries: Vec<ManifestEntry>,
+}
+
+impl SyncManifestV1 {
+    pub const VERSION: u32 = 1;
+}
+
+/// 推送结果
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPushResult {
+    /// 上传新增 / 修改的笔记数
+    pub uploaded: usize,
+    /// 推送删除（tombstone）笔记数
+    pub deleted_remote: usize,
+    /// 跳过（无变更）数
+    pub skipped: usize,
+    /// 错误清单
+    pub errors: Vec<String>,
+}
+
+/// 拉取结果
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPullResult {
+    /// 拉取新增 / 更新的笔记数
+    pub downloaded: usize,
+    /// 应用远端删除标记到本地的笔记数
+    pub deleted_local: usize,
+    /// 冲突数（远端有变更 + 本地也有变更 → 走 last-write-wins，落败方进 .conflicts/）
+    pub conflicts: usize,
+    /// 错误清单
+    pub errors: Vec<String>,
 }
 
 

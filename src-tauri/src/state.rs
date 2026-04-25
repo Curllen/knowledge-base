@@ -14,8 +14,7 @@ pub struct AppState {
     /// 资产/PDF/sources/db 都基于此路径
     pub data_dir: PathBuf,
     /// 实例 ID（None = 默认实例，Some(N) = 第 N 个多开实例）
-    /// 暂未被 Command 直接消费，预留给未来"在 UI 显示当前实例号"等需求
-    #[allow(dead_code)]
+    /// 由 `get_system_info` 暴露给前端，用于在 UI 上区分多开实例
     pub instance_id: Option<u32>,
     /// AI 生成取消信号 (conversation_id -> sender)
     pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,

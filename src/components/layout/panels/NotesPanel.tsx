@@ -1017,7 +1017,23 @@ export function NotesPanel() {
               if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
               if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
               if (result.skipped > 0) parts.push(`跳过 ${result.skipped} 篇`);
+              if (result.tags_attached && result.tags_attached > 0) {
+                parts.push(`关联标签 ${result.tags_attached} 条`);
+              }
+              if (result.attachments_copied && result.attachments_copied > 0) {
+                parts.push(`复制图片 ${result.attachments_copied} 张`);
+              }
               if (parts.length > 0) message.success(parts.join("，"));
+              const missCount = result.attachments_missing?.length ?? 0;
+              if (missCount > 0) {
+                message.warning(
+                  `${missCount} 张图片在 vault 里找不到，已保留原引用`,
+                );
+                console.warn(
+                  "[import] 缺失图片清单:",
+                  result.attachments_missing,
+                );
+              }
               if (result.errors.length > 0) {
                 message.warning(
                   `${result.errors.length} 个文件失败，详见控制台`,

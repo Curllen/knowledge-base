@@ -1,23 +1,22 @@
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::models::{DailyWritingStat, DashboardStats, SystemInfo};
 use crate::services::image::ImageService;
 use crate::state::AppState;
 
 /// 获取系统信息
+///
+/// data_dir / images_dir 都从 state 取，保证多开实例下返回的是当前实例自己的目录
+/// （而不是被所有实例共享的 app_data_dir 根）。
 #[tauri::command]
-pub fn get_system_info(app: tauri::AppHandle) -> Result<SystemInfo, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "unknown".into());
-
-    let images_dir = app
-        .path()
-        .app_data_dir()
-        .map(|p| ImageService::images_dir(&p).to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "unknown".into());
+pub fn get_system_info(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<SystemInfo, String> {
+    let data_dir = state.data_dir.to_string_lossy().into_owned();
+    let images_dir = ImageService::images_dir(&state.data_dir)
+        .to_string_lossy()
+        .into_owned();
 
     Ok(SystemInfo {
         os: std::env::consts::OS.to_string(),
@@ -25,6 +24,8 @@ pub fn get_system_info(app: tauri::AppHandle) -> Result<SystemInfo, String> {
         app_version: app.package_info().version.to_string(),
         data_dir,
         images_dir,
+        instance_id: state.instance_id,
+        is_dev: cfg!(debug_assertions),
     })
 }
 
