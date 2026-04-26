@@ -283,6 +283,19 @@ export interface PlanFromGoalResponse {
   summary?: string | null;
   /** 服务端生成的批次 ID，前端落库时每条任务都要透传到 source_batch_id */
   batchId: string;
+  /** 服务端友好警告（如 Excel 体积大被截断）；UI 在预览页顶部展示 */
+  warnings?: string[];
+}
+
+export interface PlanFromExcelRequest {
+  /** Excel/ODS 文件绝对路径（来自 Tauri dialog） */
+  filePath: string;
+  /** 计划周期天数，默认 30，最大 365 */
+  horizonDays?: number;
+  /** 起始日期 'YYYY-MM-DD'；缺省=今天 */
+  startDate?: string | null;
+  /** 用户对 Excel 内容的额外说明（可选），如"重点关注健身部分" */
+  extraGoal?: string | null;
 }
 
 // ─── AI 写笔记并归档（T-006） ────────────

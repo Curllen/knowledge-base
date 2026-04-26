@@ -57,6 +57,7 @@ import type {
   PlanTodayResponse,
   PlanFromGoalRequest,
   PlanFromGoalResponse,
+  PlanFromExcelRequest,
   DraftNoteRequest,
   DraftNoteResponse,
   VaultStatus,
@@ -485,6 +486,9 @@ export const aiPlanApi = {
   /** 目标驱动 AI 智能规划：生成 10~30 条结构化待办 + 阶段里程碑（未落库） */
   planFromGoal: (request: PlanFromGoalRequest) =>
     invoke<PlanFromGoalResponse>("ai_plan_from_goal", { request }),
+  /** Excel/ODS 文件 → AI 智能规划：解析 Excel 内容后让 AI 拆四象限任务 */
+  planFromExcel: (request: PlanFromExcelRequest) =>
+    invoke<PlanFromGoalResponse>("ai_plan_from_excel", { request }),
   /** 一键撤销某次 AI 智能规划生成的所有任务，返回删除条数 */
   undoBatch: (batchId: string) =>
     invoke<number>("undo_task_batch", { batchId }),
