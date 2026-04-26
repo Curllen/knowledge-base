@@ -102,6 +102,8 @@ impl NoteService {
             page,
             page_size,
             query.uncategorized.unwrap_or(false),
+            // 默认递归子文件夹（符合用户直觉：点父目录看到所有子树笔记）
+            query.include_descendants.unwrap_or(true),
         )?;
 
         Ok(PageResult {

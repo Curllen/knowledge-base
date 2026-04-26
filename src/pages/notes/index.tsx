@@ -672,12 +672,35 @@ export default function NoteListPage() {
         dataIndex: "title",
         key: "title",
         ellipsis: true,
-        render: (title: string, record: Note) => (
-          <span className="flex items-center">
-            <a onClick={() => navigate(`/notes/${record.id}`)}>{title}</a>
-            <NoteDecorators note={record} warningColor={token.colorWarning} />
-          </span>
-        ),
+        render: (title: string, record: Note) => {
+          // 子文件夹笔记标记：当前选中是某文件夹，且这条笔记 folder_id 不等于该选中
+          // → 笔记其实在子孙文件夹下；前面加 ↳ 小箭头作为轻量视觉提示
+          const numericFolderId =
+            folderId && folderId !== "uncategorized" ? Number(folderId) : null;
+          const isFromDescendant =
+            numericFolderId !== null && record.folder_id !== numericFolderId;
+          return (
+            <span className="flex items-center">
+              {isFromDescendant && (
+                <Tooltip
+                  title={`来自子文件夹：${record.folder_id ? folderMap.get(record.folder_id) ?? "?" : "未分类"}`}
+                >
+                  <span
+                    style={{
+                      color: token.colorTextTertiary,
+                      marginRight: 4,
+                      fontSize: 12,
+                    }}
+                  >
+                    ↳
+                  </span>
+                </Tooltip>
+              )}
+              <a onClick={() => navigate(`/notes/${record.id}`)}>{title}</a>
+              <NoteDecorators note={record} warningColor={token.colorWarning} />
+            </span>
+          );
+        },
       },
       {
         title: "目录",

@@ -145,6 +145,9 @@ impl Database {
     ///
     /// `uncategorized=true` 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹）；
     /// 与 `folder_id` 互斥，同时传 `folder_id` 优先生效。
+    ///
+    /// `include_descendants=true` 时点父文件夹连同子孙文件夹的笔记一起返回（默认行为，
+    /// 符合用户对"文件夹=容器"的直觉）。仅在传了 `folder_id` 时生效；未分类不递归。
     pub fn list_notes(
         &self,
         folder_id: Option<i64>,
@@ -152,7 +155,20 @@ impl Database {
         page: usize,
         page_size: usize,
         uncategorized: bool,
+        include_descendants: bool,
     ) -> Result<(Vec<Note>, usize), AppError> {
+        // 先在锁外算好 folder_id 列表（涉及另一次 query，避免锁内嵌套）
+        // include_descendants=true 时把 root 子树所有 ID 一起塞进 IN 子句
+        let folder_ids: Option<Vec<i64>> = if let Some(fid) = folder_id {
+            if include_descendants {
+                Some(self.collect_descendant_folder_ids(fid)?)
+            } else {
+                Some(vec![fid])
+            }
+        } else {
+            None
+        };
+
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         // 构建 WHERE 条件（始终过滤已删除 + 隐藏笔记）
@@ -160,9 +176,22 @@ impl Database {
         let mut conditions = vec!["is_deleted = 0".to_string(), "is_hidden = 0".to_string()];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-        if let Some(fid) = folder_id {
-            conditions.push(format!("folder_id = ?{}", param_values.len() + 1));
-            param_values.push(Box::new(fid));
+        if let Some(ids) = folder_ids {
+            // 单元素时退化为 = ?；多元素拼 IN (?,?,...)
+            if ids.len() == 1 {
+                conditions.push(format!("folder_id = ?{}", param_values.len() + 1));
+                param_values.push(Box::new(ids[0]));
+            } else {
+                let start = param_values.len() + 1;
+                let placeholders: String = (start..start + ids.len())
+                    .map(|i| format!("?{}", i))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                conditions.push(format!("folder_id IN ({})", placeholders));
+                for id in ids {
+                    param_values.push(Box::new(id));
+                }
+            }
         } else if uncategorized {
             // 未分类虚拟文件夹：folder_id 为 NULL 的笔记
             conditions.push("folder_id IS NULL".to_string());

@@ -85,6 +85,9 @@ pub struct NoteQuery {
     /// true 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹）。
     /// 与 folder_id 互斥（同时传 folder_id 优先生效）。
     pub uncategorized: Option<bool>,
+    /// true 时点父文件夹连同所有子孙文件夹的笔记一起返回。
+    /// 仅当传了 folder_id 时生效；未传时无意义。前端默认 true，符合用户直觉。
+    pub include_descendants: Option<bool>,
 }
 
 // ─── 文件夹 ───────────────────────────────────
@@ -792,6 +795,10 @@ pub struct TaskSuggestion {
     pub important: Option<bool>,
     /// 截止日期 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'，一般是今天
     pub due_date: Option<String>,
+    /// 提前提醒时间（分钟）。null = 不提醒；0 = 准时提醒；正整数 = 提前 N 分钟。
+    /// AI 根据四象限自动判断：Q1 紧急多用 0/15；Q2 重要多用 60/1440；Q4 多用 null。
+    #[serde(default)]
+    pub remind_before_minutes: Option<i32>,
     /// AI 给出的推荐理由（可选，用于 UI 折叠展示）
     pub reason: Option<String>,
 }

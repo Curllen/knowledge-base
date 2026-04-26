@@ -82,6 +82,8 @@ export interface NoteQuery {
   page_size?: number;
   /** true 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹） */
   uncategorized?: boolean;
+  /** true 时点父文件夹连同所有子孙文件夹的笔记一起返回（默认 true，符合"文件夹=容器"直觉） */
+  include_descendants?: boolean;
 }
 
 // ─── 文件夹 ───────────────────────────────────
@@ -248,6 +250,9 @@ export interface TaskSuggestion {
   important?: boolean | null;
   /** 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS' */
   dueDate?: string | null;
+  /** AI 自动判断的提醒时间（分钟）：null=不提醒；0=准时；正数=提前 N 分钟。
+   *  推荐值：null / 0 / 15 / 30 / 60 / 180 / 1440 / 10080 */
+  remindBefore?: number | null;
   /** AI 给出的推荐理由，UI 折叠展示 */
   reason?: string | null;
 }

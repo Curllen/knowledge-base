@@ -96,6 +96,51 @@ impl Database {
 
     /// 检查文件夹是否含有子内容（子文件夹 或 未回收的笔记）
     /// 回收站中的笔记（is_deleted = 1）不计入阻止条件
+    /// 收集 root 文件夹自身 + 所有子孙文件夹的 ID（用于"递归列出子树笔记"场景）
+    ///
+    /// 实现：用 BFS 一路扫 parent_id，避免递归 SQL CTE。folder 表通常 < 1000 条，
+    /// 嵌套深度也很浅，BFS 一两次 SELECT 就跑完。
+    /// 返回包含 root 自身的 ID 列表（顺序：BFS 层序）。
+    pub fn collect_descendant_folder_ids(&self, root_id: i64) -> Result<Vec<i64>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let mut all_ids: Vec<i64> = vec![root_id];
+        let mut frontier: Vec<i64> = vec![root_id];
+
+        while !frontier.is_empty() {
+            // 一次拿一层的所有子文件夹（IN 子句动态拼 placeholder）
+            let placeholders: String = (1..=frontier.len())
+                .map(|i| format!("?{}", i))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT id FROM folders WHERE parent_id IN ({})",
+                placeholders
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+                frontier.iter().map(|x| x as &dyn rusqlite::types::ToSql).collect();
+            let next: Vec<i64> = stmt
+                .query_map(params_ref.as_slice(), |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            if next.is_empty() {
+                break;
+            }
+            all_ids.extend(&next);
+            frontier = next;
+            // 防御性上限：超过 5000 个文件夹的子树几乎不可能，遇到就停
+            if all_ids.len() > 5000 {
+                log::warn!(
+                    "[folders] 子树 ID 超过 5000，root={}，截断防止失控",
+                    root_id
+                );
+                break;
+            }
+        }
+
+        Ok(all_ids)
+    }
+
     pub fn folder_has_children(&self, id: i64) -> Result<bool, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
