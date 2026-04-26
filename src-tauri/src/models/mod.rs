@@ -338,6 +338,14 @@ pub struct ImportResult {
     /// T-009 Commit 2: 缺失的图片清单（"笔记标题: 原始引用"格式，已去重）
     #[serde(default)]
     pub attachments_missing: Vec<String>,
+    /// 本次新建的笔记 ID（按文件参数顺序，含 Duplicate 副本）。
+    /// 前端用它做"导入后跳转"：1 篇直接打开编辑器，多篇跳列表。
+    #[serde(default, rename = "noteIds")]
+    pub note_ids: Vec<i64>,
+    /// 命中已有笔记并按 Skip 策略跳过时记录的现有笔记 ID。
+    /// 前端"重复命中也跳"逻辑用：用户拖个旧文件想打开它，能直达。
+    #[serde(default, rename = "existingNoteIds")]
+    pub existing_note_ids: Vec<i64>,
 }
 
 /// 导入进度（通过事件推送）

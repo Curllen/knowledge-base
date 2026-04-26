@@ -238,12 +238,14 @@ export function NotesPanel() {
     }
   }
 
-  /** 打开本机 .md 文件 → 导入/复用笔记 → 跳转 */
+  /** 打开本机 .md / .txt 文件 → 导入/复用笔记 → 跳转 */
   async function handleOpenMarkdown() {
     try {
       const picked = await openDialog({
         multiple: false,
-        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+        filters: [
+          { name: "文本", extensions: ["md", "markdown", "txt"] },
+        ],
       });
       const path = Array.isArray(picked) ? picked[0] : picked;
       if (!path) return;

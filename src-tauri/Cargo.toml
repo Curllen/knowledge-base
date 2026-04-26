@@ -67,6 +67,9 @@ tauri-plugin-notification = "2"
 calamine = "0.28"
 # T-020 笔记导出为 Word：纯 Rust 生成 .docx；零系统依赖
 docx-rs = "0.4"
+# T-027 .txt 导入：很多旧 txt 是 GBK / GB18030 / Big5，必须先嗅探编码再转 UTF-8
+chardetng = "0.1"
+encoding_rs = "0.8"
 
 # ─── 编译优化 ────────────────────────────────────
 

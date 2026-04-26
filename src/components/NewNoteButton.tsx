@@ -12,8 +12,8 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { TemplatePickerModal } from "./TemplatePickerModal";
 import {
   createBlankAndOpen,
-  importMarkdownFlow,
   importPdfsFlow,
+  importTextFlow,
   importWordFlow,
 } from "@/lib/noteCreator";
 
@@ -61,22 +61,22 @@ export function NewNoteButton({
     },
     { type: "divider" },
     {
-      key: "import-md",
-      label: "导入 Markdown…",
+      key: "import-text",
+      label: "导入 Markdown / TXT…",
       icon: <FileTypeIcon type="md" size={14} />,
-      onClick: () => importMarkdownFlow(folderId),
+      onClick: () => importTextFlow(folderId, navigate),
     },
     {
       key: "import-pdf",
       label: "导入 PDF…",
       icon: <FileTypeIcon type="pdf" size={14} />,
-      onClick: () => importPdfsFlow(folderId),
+      onClick: () => importPdfsFlow(folderId, navigate),
     },
     {
       key: "import-docx",
       label: "导入 Word…",
       icon: <FileTypeIcon type="docx" size={14} />,
-      onClick: () => importWordFlow(folderId),
+      onClick: () => importWordFlow(folderId, navigate),
     },
   ];
 

@@ -10,6 +10,31 @@ import { noteApi, importApi, pdfApi, sourceFileApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
 
+/**
+ * 导入完成后的统一跳转规则（业界 Bear / Apple Notes / VS Code 路线）：
+ *   · 1 篇新建            → 直开编辑器
+ *   · 0 新建 + 1 命中已有 → 跳那篇已有的（"我导入是为了打开它"）
+ *   · ≥ 2 篇              → 跳笔记列表（默认时间倒序，新导入在顶部）
+ *   · 全失败/全跳过       → 留在原地，让 message/Modal 提示就够
+ *
+ * navigate 可选：调用方不传就静默不跳，兼容旧用法（少数地方还没接 router）。
+ */
+function navigateAfterImport(
+  navigate: NavigateFunction | undefined,
+  newIds: number[],
+  existingIds: number[],
+): void {
+  if (!navigate) return;
+  const total = newIds.length + existingIds.length;
+  if (total === 0) return;
+  if (total === 1) {
+    const only = newIds[0] ?? existingIds[0];
+    if (only != null) navigate(`/notes/${only}`);
+    return;
+  }
+  navigate("/notes");
+}
+
 /** 未命名笔记标题，带时间戳避免同名堆叠时难区分 */
 function untitledTitle(): string {
   const d = new Date();
@@ -37,16 +62,27 @@ export async function createBlankAndOpen(
   }
 }
 
-/** Markdown 导入流程：弹对话框 → 后端批量导入 */
-export async function importMarkdownFlow(folderId: number | null): Promise<void> {
+/**
+ * 文本笔记导入流程（同质合并版）：md / markdown / txt 共用一条通路。
+ *
+ * 后端 `import_selected_files` 已能识别这三种扩展名，并自动嗅探编码
+ * （UTF-8 / GBK / GB18030 / Big5 等老 .txt 也能正确读出中文）。
+ * 用户可一次混选不同扩展名的文件批量导入。
+ */
+export async function importTextFlow(
+  folderId: number | null,
+  navigate?: NavigateFunction,
+): Promise<void> {
   const picked = await openDialog({
     multiple: true,
-    filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+    filters: [
+      { name: "Markdown / 纯文本", extensions: ["md", "markdown", "txt"] },
+    ],
   });
   if (!picked) return;
   const paths = Array.isArray(picked) ? picked : [picked];
   if (paths.length === 0) return;
-  const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件...`, 0);
+  const hide = message.loading(`正在导入 ${paths.length} 个文件...`, 0);
   try {
     const result = await importApi.importSelected(paths, folderId);
     hide();
@@ -87,6 +123,7 @@ export async function importMarkdownFlow(folderId: number | null): Promise<void>
     }
     useAppStore.getState().bumpNotesRefresh();
     useAppStore.getState().bumpFoldersRefresh();
+    navigateAfterImport(navigate, result.noteIds ?? [], result.existingNoteIds ?? []);
   } catch (e) {
     hide();
     message.error(`导入失败: ${e}`);
@@ -94,7 +131,10 @@ export async function importMarkdownFlow(folderId: number | null): Promise<void>
 }
 
 /** PDF 导入流程 */
-export async function importPdfsFlow(folderId: number | null): Promise<void> {
+export async function importPdfsFlow(
+  folderId: number | null,
+  navigate?: NavigateFunction,
+): Promise<void> {
   const picked = await openDialog({
     multiple: true,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -128,6 +168,8 @@ export async function importPdfsFlow(folderId: number | null): Promise<void> {
       });
     }
     useAppStore.getState().bumpNotesRefresh();
+    const ids = ok.map((r) => r.noteId).filter((v): v is number => v != null);
+    navigateAfterImport(navigate, ids, []);
   } catch (e) {
     hide();
     message.error(`导入失败: ${e}`);
@@ -135,7 +177,10 @@ export async function importPdfsFlow(folderId: number | null): Promise<void> {
 }
 
 /** Word 导入流程：.doc 需本机装 LibreOffice / Office / WPS */
-export async function importWordFlow(folderId: number | null): Promise<void> {
+export async function importWordFlow(
+  folderId: number | null,
+  navigate?: NavigateFunction,
+): Promise<void> {
   const converter = await sourceFileApi
     .getConverterStatus()
     .catch(() => "none" as const);
@@ -183,6 +228,8 @@ export async function importWordFlow(folderId: number | null): Promise<void> {
       });
     }
     useAppStore.getState().bumpNotesRefresh();
+    const ids = ok.map((r) => r.noteId).filter((v): v is number => v != null);
+    navigateAfterImport(navigate, ids, []);
   } catch (e) {
     hide();
     message.error(`导入失败: ${e}`);

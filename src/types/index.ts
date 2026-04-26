@@ -373,6 +373,10 @@ export interface ImportResult {
   attachments_copied?: number;
   /** T-009 Commit 2: 缺失的图片清单（"笔记标题: 原始引用"，已去重） */
   attachments_missing?: string[];
+  /** 本次新建的笔记 ID（按文件参数顺序，含 Duplicate 副本） */
+  noteIds?: number[];
+  /** 命中已有笔记并按 Skip 策略跳过时记录的现有笔记 ID */
+  existingNoteIds?: number[];
 }
 
 /** 导入进度 */

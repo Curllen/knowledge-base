@@ -30,6 +30,8 @@ function configFor(type: string | null | undefined): IconConfig {
     case "md":
     case "markdown":
       return { label: "M↓", color: "#08979C", bg: "#E6FFFB" };
+    case "txt":
+      return { label: "TXT", color: "#595959", bg: "#F5F5F5" };
     default:
       return { label: "T", color: "#8C8C8C", bg: "#FAFAFA" };
   }

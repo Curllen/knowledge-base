@@ -12,6 +12,40 @@ use crate::models::{
 };
 use crate::services::hash::sha256_hex;
 
+/// 接受导入的纯文本扩展名（小写，不含点）。
+/// .txt 与 .md 走同一通路：纯文本本身就是合法 markdown，无需独立 Service。
+const TEXT_EXTENSIONS: &[&str] = &["md", "markdown", "txt"];
+
+fn is_text_extension(ext: &str) -> bool {
+    TEXT_EXTENSIONS.iter().any(|&e| e == ext)
+}
+
+/// 读取纯文本文件并自动嗅探编码。
+///
+/// 优先尝试 UTF-8（最常见、零开销）；失败时用 chardetng 推断（GBK / GB18030 /
+/// Big5 / Shift_JIS 等中文 / 日文老 txt 大多落在这里），再用 encoding_rs 解码。
+/// 解码用 `decode` 而非 `decode_without_bom_handling` —— 顺手吃掉文件头 BOM。
+pub fn read_text_auto_encoding(path: &Path) -> Result<String, AppError> {
+    let bytes = std::fs::read(path).map_err(AppError::Io)?;
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        // 去掉 UTF-8 BOM（\u{FEFF}），避免显示成行首怪字符
+        return Ok(s.trim_start_matches('\u{FEFF}').to_owned());
+    }
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
+    let (cow, _, _) = encoding.decode(&bytes);
+    Ok(cow.into_owned())
+}
+
+/// 取文件扩展名小写形式（无后缀返回空字符串）。
+fn ext_lower(path: &Path) -> String {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
 pub struct ImportService;
 
 impl ImportService {
@@ -44,11 +78,7 @@ impl ImportService {
             .filter_entry(|e| !should_skip_dir_entry(e))
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.file_type().is_file()
-                    && e.path()
-                        .extension()
-                        .map(|ext| ext == "md" || ext == "markdown")
-                        .unwrap_or(false)
+                e.file_type().is_file() && is_text_extension(&ext_lower(e.path()))
             })
             .filter_map(|entry| {
                 let path = entry.path();
@@ -136,6 +166,9 @@ impl ImportService {
         // T-009 Commit 2 附件复制统计
         let mut attachments_copied = 0usize;
         let mut attachments_missing: Vec<String> = Vec::new();
+        // 跳转所需的 ID 列表
+        let mut note_ids: Vec<i64> = Vec::new();
+        let mut existing_note_ids: Vec<i64> = Vec::new();
 
         // 提供了 root_path 时，在那里建附件索引（OB vault 模式）；
         // 没传则不索引（用户只是导入零散 .md 文件，没 vault 上下文）
@@ -192,8 +225,8 @@ impl ImportService {
                 },
             );
 
-            // 读取文件内容
-            let content = match std::fs::read_to_string(file_path) {
+            // 读取文件内容（自动嗅探 UTF-8 / GBK 等编码，兼容老 .txt）
+            let content = match read_text_auto_encoding(file_path) {
                 Ok(c) => c,
                 Err(e) => {
                     errors.push(format!("{}: 读取失败 - {}", file_name, e));
@@ -222,7 +255,7 @@ impl ImportService {
             let title = fm_title
                 .or_else(|| extract_title(&body_content))
                 .unwrap_or_else(|| file_name.clone());
-            let (match_kind, _existing_id) = match detect_existing_match_with_content(
+            let (match_kind, existing_id) = match detect_existing_match_with_content(
                 db,
                 &canonical_path,
                 &title,
@@ -240,6 +273,10 @@ impl ImportService {
                 ("new", _) => title,
                 (_, ImportConflictPolicy::Skip) => {
                     skipped += 1;
+                    // 记下命中的已有笔记 ID，供前端"重复命中也跳"用
+                    if let Some(id) = existing_id {
+                        existing_note_ids.push(id);
+                    }
                     continue;
                 }
                 (_, ImportConflictPolicy::Duplicate) => {
@@ -273,13 +310,19 @@ impl ImportService {
 
             match db.create_note(&input) {
                 Ok(note) => {
+                    // 记录新建的笔记 ID，给前端"导入后跳转"用
+                    note_ids.push(note.id);
                     // 写入 canonical path，下次导入同一文件即可按 path 去重命中
                     // 注意：Duplicate 策略新建的副本也挂 canonical_path —— 这样下次
                     // 再导入同文件仍会命中 path，按用户当时选的策略处理，不会无限新建
+                    let src_type = match ext_lower(file_path).as_str() {
+                        "txt" => "txt",
+                        _ => "md", // markdown / md 统一记 md
+                    };
                     let _ = db.set_note_source_file(
                         note.id,
                         Some(&canonical_path),
-                        Some("md"),
+                        Some(src_type),
                     );
 
                     // ─── T-009: 把 frontmatter 中的标签关联到这条笔记 ───
@@ -446,6 +489,8 @@ impl ImportService {
             frontmatter_parsed,
             attachments_copied,
             attachments_missing,
+            note_ids,
+            existing_note_ids,
         };
 
         let _ = emitter.emit("import:done", &result);
@@ -477,7 +522,7 @@ impl ImportService {
             .unwrap_or("未命名")
             .to_string();
 
-        let raw_content = std::fs::read_to_string(path).map_err(|e| {
+        let raw_content = read_text_auto_encoding(path).map_err(|e| {
             AppError::Custom(format!("读取文件失败: {} ({})", file_path, e))
         })?;
 
@@ -527,7 +572,11 @@ impl ImportService {
             folder_id: None,
         };
         let note = db.create_note(&input)?;
-        let _ = db.set_note_source_file(note.id, Some(&canonical), Some("md"));
+        let src_type = match ext_lower(path).as_str() {
+            "txt" => "txt",
+            _ => "md",
+        };
+        let _ = db.set_note_source_file(note.id, Some(&canonical), Some(src_type));
 
         // 处理图片：本地相对路径（同级目录） + 外链下载（绕开微信防盗链等）
         let (processed, mappings) =
@@ -742,7 +791,7 @@ fn detect_existing_match(
     }
 
     // 按 title + content_hash 兜底
-    let content = match std::fs::read_to_string(file_path) {
+    let content = match read_text_auto_encoding(file_path) {
         Ok(c) => c,
         Err(_) => return Ok(("new".to_string(), None)),
     };
