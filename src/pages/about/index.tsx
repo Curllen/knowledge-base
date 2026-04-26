@@ -276,7 +276,7 @@ export default function AboutPage() {
           >
             数据目录下的核心文件 / 子目录：
           </Typography.Paragraph>
-          <ul style={{ fontSize: 12, paddingLeft: 20, margin: "0 0 8px", color: token.colorTextSecondary }}>
+          <ul style={{ fontSize: 12, paddingLeft: 20, margin: "0 0 8px", color: "rgba(0,0,0,0.45)" }}>
             <li style={{ marginBottom: 2 }}><code>app.db</code> — 笔记 / 文件夹 / 标签 / 链接 / AI 对话 / 待办 / 加密数据等全部元数据（SQLite）</li>
             <li style={{ marginBottom: 2 }}><code>kb_assets/</code> — 笔记内嵌图片（含 <code>kb_assets/videos/</code> 子目录的视频）</li>
             <li style={{ marginBottom: 2 }}><code>pdfs/</code> — 导入的 PDF 原始文件</li>

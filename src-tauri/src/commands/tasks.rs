@@ -6,6 +6,11 @@ use crate::models::{
 use crate::services::tasks::TaskService;
 use crate::state::AppState;
 
+/// 任何会改变"提醒触发点"的写操作完成后必须调一次，让调度器重算下次唤醒时间
+fn notify_reminder(state: &State<'_, AppState>) {
+    state.reminder_notify.notify_one();
+}
+
 #[tauri::command]
 pub fn list_tasks(
     state: State<'_, AppState>,
@@ -23,7 +28,9 @@ pub fn get_task(state: State<'_, AppState>, id: i64) -> Result<Task, String> {
 
 #[tauri::command]
 pub fn create_task(state: State<'_, AppState>, input: CreateTaskInput) -> Result<i64, String> {
-    TaskService::create(&state.db, input).map_err(|e| e.to_string())
+    let id = TaskService::create(&state.db, input).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(id)
 }
 
 #[tauri::command]
@@ -32,17 +39,23 @@ pub fn update_task(
     id: i64,
     input: UpdateTaskInput,
 ) -> Result<bool, String> {
-    TaskService::update(&state.db, id, input).map_err(|e| e.to_string())
+    let ok = TaskService::update(&state.db, id, input).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(ok)
 }
 
 #[tauri::command]
 pub fn toggle_task_status(state: State<'_, AppState>, id: i64) -> Result<i32, String> {
-    TaskService::toggle_status(&state.db, id).map_err(|e| e.to_string())
+    let v = TaskService::toggle_status(&state.db, id).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(v)
 }
 
 #[tauri::command]
 pub fn delete_task(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
-    TaskService::delete(&state.db, id).map_err(|e| e.to_string())
+    let ok = TaskService::delete(&state.db, id).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(ok)
 }
 
 /// 批量删除任务（任务页多选模式用）。返回实际删除的条数。
@@ -51,10 +64,12 @@ pub fn delete_tasks_batch(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<usize, String> {
-    state
+    let n = state
         .db
         .delete_tasks_by_ids(&ids)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(n)
 }
 
 /// 批量标记任务为已完成（任务页多选模式用）。返回实际更新条数。
@@ -63,10 +78,12 @@ pub fn complete_tasks_batch(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<usize, String> {
-    state
+    let n = state
         .db
         .complete_tasks_by_ids(&ids)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(n)
 }
 
 #[tauri::command]
@@ -95,7 +112,9 @@ pub fn snooze_task_reminder(
     id: i64,
     minutes: i32,
 ) -> Result<bool, String> {
-    TaskService::snooze(&state.db, id, minutes).map_err(|e| e.to_string())
+    let ok = TaskService::snooze(&state.db, id, minutes).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(ok)
 }
 
 /// 完成本次（循环任务）：推进到下一次；非循环任务等同于 toggle 到完成。
@@ -110,5 +129,7 @@ pub fn complete_task_occurrence(state: State<'_, AppState>, id: i64) -> Result<(
         .flatten()
         .map(|s| if s.len() == 5 { format!("{}:00", s) } else { s })
         .unwrap_or_else(|| "09:00:00".to_string());
-    TaskService::complete_occurrence(&state.db, id, &base).map_err(|e| e.to_string())
+    TaskService::complete_occurrence(&state.db, id, &base).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(())
 }

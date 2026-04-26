@@ -319,9 +319,13 @@ export default function TasksPage() {
     }
   }, [viewMode, filter, keyword, message]);
 
+  // 订阅全局 tasksListRefreshTick：提醒弹窗 / 紧急窗 / 后台 reminder 推进循环
+  // 任务等场景修改任务后会 bump tick，让本页自动重拉，无需关页再开
+  const tasksListRefreshTick = useAppStore((s) => s.tasksListRefreshTick);
+
   useEffect(() => {
     loadTasks();
-  }, [loadTasks]);
+  }, [loadTasks, tasksListRefreshTick]);
 
   const grouped = useMemo(() => groupTasks(tasks), [tasks]);
 
@@ -405,9 +409,10 @@ export default function TasksPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建 */}
-      <div className="flex items-end justify-between mb-4">
+    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0">
+      {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建
+          顶部头(标题 + 搜索) flex-shrink-0 永不滚动；下面列表区单独可滚 */}
+      <div className="flex items-end justify-between mb-2 flex-shrink-0">
         <div>
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <CheckSquare size={20} style={{ color: token.colorPrimary }} />
@@ -465,9 +470,10 @@ export default function TasksPage() {
         value={keyword}
         onChange={(e) => setKeyword(e.target.value)}
         allowClear
-        className="mb-4"
+        className="mb-3 flex-shrink-0"
       />
 
+      <div className="flex-1 min-h-0 overflow-auto pr-1">
       {loading ? (
         <div className="flex justify-center py-12">
           <Spin />
@@ -657,6 +663,8 @@ export default function TasksPage() {
               )}
         </div>
       )}
+
+      </div>
 
       {/* 多选模式底部 ActionBar：浮在屏幕底部，仅 list 视图 + 选中至少 1 条时显示 */}
       {multiSelect && viewMode === "list" && selectedIds.size > 0 && (

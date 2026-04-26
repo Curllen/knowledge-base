@@ -94,6 +94,9 @@ interface AppStore {
   foldersRefreshTick: number;
   /** 标签列表刷新触发器：标签页/编辑器 CRUD 后递增，其他消费者自动重拉 */
   tagsRefreshTick: number;
+  /** 任务列表刷新触发器：提醒弹窗内动作 / 后台 reminder 触发 advance 后递增，
+   * 任务列表页订阅它自动重拉，避免列表显示陈旧状态 */
+  tasksListRefreshTick: number;
   /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
   urgentTodoCount: number;
   /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
@@ -143,6 +146,8 @@ interface AppStore {
   bumpFoldersRefresh: () => void;
   /** 触发所有标签下拉/列表刷新（标签页或编辑器新建标签后调用） */
   bumpTagsRefresh: () => void;
+  /** 触发任务列表页 / 看板 / 四象限重拉（提醒弹窗操作完任务后调用） */
+  bumpTasksListRefresh: () => void;
   /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
   refreshTaskStats: () => Promise<void>;
   /**
@@ -208,6 +213,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   notesRefreshTick: 0,
   foldersRefreshTick: 0,
   tagsRefreshTick: 0,
+  tasksListRefreshTick: 0,
   urgentTodoCount: 0,
   alwaysOnTop: false,
   activeView: "notes",
@@ -242,6 +248,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
   bumpFoldersRefresh: () => set((s) => ({ foldersRefreshTick: s.foldersRefreshTick + 1 })),
   bumpTagsRefresh: () => set((s) => ({ tagsRefreshTick: s.tagsRefreshTick + 1 })),
+  bumpTasksListRefresh: () =>
+    set((s) => ({ tasksListRefreshTick: s.tasksListRefreshTick + 1 })),
   refreshTaskStats: async () => {
     try {
       const stats = await taskApi.stats();

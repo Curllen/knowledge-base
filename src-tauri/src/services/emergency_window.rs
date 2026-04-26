@@ -27,15 +27,20 @@ pub fn open_for_task(app: &AppHandle, task_id: i64) -> Result<(), AppError> {
     }
 
     let url = format!("index.html#/emergency-reminder/{}", task_id);
+    // 设计取舍：参考 Outlook 会议提醒——小窗 + 置顶 + 居中。
+    // 不再 maximized：用户能看到底层应用、能切焦点处理别的事，但弹窗始终可见。
+    // resizable=true 给用户调整空间；shadow=true 让置顶弹窗在浅色背景上仍有立体感。
     WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("紧急待办提醒")
-        .inner_size(1200.0, 800.0)
-        .min_inner_size(640.0, 420.0)
+        .inner_size(560.0, 380.0)
+        .min_inner_size(420.0, 300.0)
+        .center()
+        .resizable(true)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(false)
         .focused(true)
-        .maximized(true)
+        .shadow(true)
         .visible(true)
         .build()
         .map_err(|e| AppError::Custom(format!("紧急提醒窗口创建失败: {}", e)))?;

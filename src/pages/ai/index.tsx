@@ -132,15 +132,29 @@ export default function AiChatPage() {
     };
   }, []);
 
-  // 接收外部跳转过来的"激活对话 ID"（笔记列表"发到 AI"入口）
+  // 待发送的自动 prompt（首页"问 AI"入口跳过来时携带）
+  // 等 activeConvId 切到目标对话后再触发 handleSend(prompt)
+  const pendingAutoSendRef = useRef<{ convId: number; prompt: string } | null>(
+    null,
+  );
+
+  // 接收外部跳转过来的"激活对话 ID"（笔记列表"发到 AI" / 首页"问 AI" 入口）
   // 拿到一次后清掉 state，避免用户后续再切回 AI 页又被自动跳走
   useEffect(() => {
-    const incomingId = (location.state as { activeConvId?: number } | null)
-      ?.activeConvId;
+    const state = location.state as
+      | { activeConvId?: number; pendingPrompt?: string }
+      | null;
+    const incomingId = state?.activeConvId;
     if (incomingId) {
       setActiveConvId(incomingId);
       // 触发对话列表刷新让 chip 区拿到 attached_note_ids
       loadConversations();
+      if (state?.pendingPrompt) {
+        pendingAutoSendRef.current = {
+          convId: incomingId,
+          prompt: state.pendingPrompt,
+        };
+      }
       navigate(location.pathname, { replace: true, state: null });
     }
   }, [location.state]);
@@ -328,11 +342,11 @@ export default function AiChatPage() {
     }
   }
 
-  const handleSend = useCallback(async () => {
-    if (!inputText.trim() || !activeConvId || streaming) return;
-
-    const text = inputText.trim();
-    setInputText("");
+  const handleSend = useCallback(async (textOverride?: string) => {
+    const raw = textOverride ?? inputText;
+    const text = raw.trim();
+    if (!text || !activeConvId || streaming) return;
+    if (!textOverride) setInputText("");
     setStreaming(true);
     setStreamingText("");
     setStreamingSkillCalls([]);
@@ -410,6 +424,24 @@ export default function AiChatPage() {
       showAiError(e);
     }
   }, [inputText, activeConvId, streaming, useRag, useSkills]);
+
+  // handleSend 是 useCallback,闭包会随依赖变化重新生成；
+  // pendingAutoSend 触发时需要拿最新的 handleSend,用 ref 桥接
+  const handleSendRef = useRef(handleSend);
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
+
+  // activeConvId 切到目标对话且未在 streaming → 触发待发送的 prompt
+  useEffect(() => {
+    const pending = pendingAutoSendRef.current;
+    if (!pending) return;
+    if (activeConvId !== pending.convId) return;
+    if (streaming) return;
+    pendingAutoSendRef.current = null;
+    // microtask 让 handleSendRef 收到最新闭包(activeConvId 变化触发的 useCallback 重建)
+    Promise.resolve().then(() => handleSendRef.current(pending.prompt));
+  }, [activeConvId, streaming, handleSend]);
 
   async function handleCancel() {
     if (activeConvId) {
@@ -842,7 +874,7 @@ export default function AiChatPage() {
                   <Button
                     type="primary"
                     icon={<Send size={16} />}
-                    onClick={handleSend}
+                    onClick={() => handleSend()}
                     disabled={!inputText.trim()}
                   >
                     发送

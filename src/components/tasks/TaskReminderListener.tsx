@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { App as AntdApp, Button, Modal, Space, Tag, Typography } from "antd";
+import { App as AntdApp, Button, Modal, Tag, Tooltip, Typography } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { taskApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { Task } from "@/types";
 import { beepOnce } from "@/lib/audio/beep";
 
@@ -9,24 +10,24 @@ const { Text, Paragraph } = Typography;
 
 /**
  * 监听后端 `task:reminder` 事件，对每条到点任务弹应用内 Modal。
- *
  * 放在 AntdApp 内部，整棵树只挂一次（见 App.tsx）。
+ *
+ * 行为说明：
+ * - priority==0 紧急任务由后端直接打开「全屏接管窗口」处理，不会 emit 给主窗
+ *   所以这里收到的都是 priority>=1 的强烈级，仅"叮"一声 + Modal
+ * - 用户操作完成 / snooze / 结束循环后必须 bumpTasksListRefresh，
+ *   否则任务列表页 / 看板 / 四象限不会重拉，看到的是陈旧数据
  */
 export function TaskReminderListener() {
   const { message } = AntdApp.useApp();
   // 队列化：同一时刻可能多条任务到点，依次弹出
   const [queue, setQueue] = useState<Task[]>([]);
+  const [acting, setActing] = useState(false);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
-    // 后端 reminded_at 已保证不会重复 emit 同一个提醒周期，前端直接入队即可。
-    // snooze 会把 reminded_at 清空，下一轮到点仍会重新入队弹窗。
-    //
-    // 注意：priority==0 的紧急任务由后端直接打开「全屏接管窗口」处理，不会再
-    // emit task:reminder 给主窗（避免双重打扰）；这里收到的都是强烈/普通级。
     listen<Task>("task:reminder", (e) => {
       setQueue((prev) => {
-        // 防御性兜底：若当前队列里已排着同一 id，就不重复塞
         if (prev.some((t) => t.id === e.payload.id)) return prev;
         // 强烈级提示：弹 Modal 时叮一声（任务栏闪烁已由后端 request_user_attention 触发）
         beepOnce();
@@ -41,109 +42,180 @@ export function TaskReminderListener() {
   }, []);
 
   const current = queue[0] ?? null;
+  const isRepeating = !!current && current.repeat_kind !== "none";
 
   function dismiss() {
     setQueue((prev) => prev.slice(1));
   }
 
-  async function handleSnooze(minutes: number) {
-    if (!current) return;
+  /** 通用：先做事 → 提示 → 刷新列表 → 弹下一条 */
+  async function runAndDismiss(
+    label: string,
+    op: () => Promise<unknown>,
+    successMsg: string,
+  ) {
+    if (!current || acting) return;
+    setActing(true);
     try {
-      await taskApi.snooze(current.id, minutes);
-      message.success(`已推迟 ${formatMinutes(minutes)} 再提醒`);
+      await op();
+      message.success(successMsg);
+      // 关键：bump 任务列表刷新 + 重算紧急角标，避免列表显示陈旧状态
+      const s = useAppStore.getState();
+      s.bumpTasksListRefresh();
+      void s.refreshTaskStats();
     } catch (e) {
-      message.error(`推迟失败: ${e}`);
+      message.error(`${label}失败：${e}`);
     } finally {
+      setActing(false);
       dismiss();
     }
   }
 
-  async function handleCompleteOccurrence() {
-    if (!current) return;
-    try {
-      await taskApi.completeOccurrence(current.id);
-      message.success(isRepeating ? "已完成本次，已推进到下一次" : "已标记完成");
-    } catch (e) {
-      message.error(`操作失败: ${e}`);
-    } finally {
-      dismiss();
-    }
-  }
+  const handleSnooze = (m: number) =>
+    runAndDismiss(
+      `推迟 ${formatMinutes(m)}`,
+      () => taskApi.snooze(current!.id, m),
+      `已推迟 ${formatMinutes(m)} 再提醒`,
+    );
 
-  async function handleEndSeries() {
-    if (!current) return;
-    try {
-      await taskApi.toggleStatus(current.id);
-      message.success("已结束整条循环");
-    } catch (e) {
-      message.error(`操作失败: ${e}`);
-    } finally {
-      dismiss();
-    }
-  }
+  const handleCompleteOccurrence = () =>
+    runAndDismiss(
+      "标记完成",
+      () => taskApi.completeOccurrence(current!.id),
+      isRepeating ? "已完成本次，已推进到下一次" : "已标记完成",
+    );
 
-  const isRepeating = !!current && current.repeat_kind !== "none";
+  const handleEndSeries = () =>
+    runAndDismiss(
+      "结束循环",
+      () => taskApi.toggleStatus(current!.id),
+      "已结束整条循环",
+    );
 
   return (
     <Modal
       open={!!current}
-      title="⏰ 待办提醒"
+      title={
+        <span>
+          <span style={{ marginRight: 6 }}>⏰</span>待办提醒
+        </span>
+      }
       onCancel={dismiss}
-      width={440}
+      width={460}
       footer={
-        <div className="flex items-center justify-between">
-          <Space size="small">
-            <Button size="small" onClick={() => handleSnooze(5)}>
-              5 分钟后
-            </Button>
-            <Button size="small" onClick={() => handleSnooze(15)}>
-              15 分钟后
-            </Button>
-            <Button size="small" onClick={() => handleSnooze(60)}>
-              1 小时后
-            </Button>
-          </Space>
-          <Space>
-            <Button onClick={dismiss}>知道了</Button>
+        <div className="flex flex-col gap-3">
+          {/* 推迟提醒：左侧标签 + 三个时长按钮 */}
+          <div className="flex items-center justify-between">
+            <span style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+              推迟提醒
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="small"
+                disabled={acting}
+                onClick={() => handleSnooze(5)}
+              >
+                5 分钟
+              </Button>
+              <Button
+                size="small"
+                disabled={acting}
+                onClick={() => handleSnooze(15)}
+              >
+                15 分钟
+              </Button>
+              <Button
+                size="small"
+                disabled={acting}
+                onClick={() => handleSnooze(60)}
+              >
+                1 小时
+              </Button>
+            </div>
+          </div>
+
+          {/* 主操作：知道了（关弹窗不动任务） + 结束循环（仅循环任务） + 标记完成 */}
+          <div className="flex items-center justify-end gap-2">
+            <Tooltip
+              title="任务保留待办，本次提醒不再响。循环任务会按规则在下一次到点继续提醒。"
+              placement="top"
+            >
+              <Button disabled={acting} onClick={dismiss}>
+                知道了
+              </Button>
+            </Tooltip>
             {isRepeating && (
-              <Button onClick={handleEndSeries} danger>
+              <Button danger disabled={acting} onClick={handleEndSeries}>
                 结束循环
               </Button>
             )}
-            <Button type="primary" onClick={handleCompleteOccurrence}>
+            <Button
+              type="primary"
+              loading={acting}
+              disabled={acting}
+              onClick={handleCompleteOccurrence}
+            >
               {isRepeating ? "完成本次" : "标记完成"}
             </Button>
-          </Space>
+          </div>
         </div>
       }
     >
       {current && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Text strong style={{ fontSize: 16 }}>
-              {current.title}
-            </Text>
-            {current.priority === 0 && <Tag color="red">紧急</Tag>}
-            {current.important && <Tag color="gold">重要</Tag>}
+        <div className="flex flex-col" style={{ gap: 10, paddingTop: 4 }}>
+          {/* 标签行 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {current.priority === 0 && (
+              <Tag color="red" style={{ margin: 0 }}>
+                紧急
+              </Tag>
+            )}
+            {current.important && (
+              <Tag color="gold" style={{ margin: 0 }}>
+                重要
+              </Tag>
+            )}
             {isRepeating && (
-              <Tag color="blue">{describeRepeat(current)}</Tag>
+              <Tag color="blue" style={{ margin: 0 }}>
+                {describeRepeat(current)}
+              </Tag>
             )}
           </div>
+
+          {/* 标题 */}
+          <Text strong style={{ fontSize: 17, lineHeight: 1.4 }}>
+            {current.title}
+          </Text>
+
+          {/* 截止时间 */}
           {current.due_date && (
-            <Text type="secondary" style={{ fontSize: 13 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
               截止 {current.due_date}
             </Text>
           )}
+
+          {/* 描述 */}
           {current.description && (
             <Paragraph
               type="secondary"
-              style={{ fontSize: 13, marginBottom: 0, whiteSpace: "pre-wrap" }}
+              style={{
+                fontSize: 13,
+                marginBottom: 0,
+                whiteSpace: "pre-wrap",
+                maxHeight: 140,
+                overflowY: "auto",
+              }}
             >
               {current.description}
             </Paragraph>
           )}
+
+          {/* 队列尾巴提示 */}
           {queue.length > 1 && (
-            <Text type="secondary" style={{ fontSize: 12 }}>
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}
+            >
               还有 {queue.length - 1} 条待提醒
             </Text>
           )}
@@ -161,14 +233,12 @@ function formatMinutes(m: number): string {
 
 const WEEKDAY_LABELS = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
-/** 把循环规则用人话说出来 */
 function describeRepeat(task: Task): string {
   const { repeat_kind, repeat_interval, repeat_weekdays } = task;
   if (repeat_kind === "none") return "";
   const iv = Math.max(1, repeat_interval);
   if (repeat_kind === "daily") return iv === 1 ? "每天" : `每 ${iv} 天`;
   if (repeat_kind === "monthly") return iv === 1 ? "每月" : `每 ${iv} 月`;
-  // weekly
   if (repeat_weekdays) {
     const days = repeat_weekdays
       .split(",")

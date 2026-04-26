@@ -122,10 +122,13 @@ impl super::Database {
 
         let task: Option<Task> = conn
             .query_row(
+                // SELECT 必须包含 19 列以对齐下方 row.get(0..=18)；缺 source_batch_id
+                // 时 row.get(18)? 抛 InvalidColumnIndex，被 .ok() 吞成 None，前端永远收到
+                // "任务 X 不存在" —— 这导致紧急窗口加载详情失败
                 "SELECT id, title, description, priority, important, status, due_date,
                         completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
                         repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
-                        repeat_count, repeat_done_count
+                        repeat_count, repeat_done_count, source_batch_id
                  FROM tasks WHERE id = ?1",
                 params![id],
                 |row| {
@@ -471,11 +474,14 @@ impl super::Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
+        // SELECT 必须包含 18 个映射用到的列（索引 0..=17），最后一个 source_batch_id
+        // 之前缺这列，导致 row.get(18)? 抛 InvalidColumnIndex —— 调度器每次 tick 都失败，
+        // 提醒从未触发（看似"调度器静默"）。修复：补全 SELECT 列对齐 row.get 索引。
         let sql = "
             SELECT id, title, description, priority, important, status, due_date,
                    completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
                    repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
-                   repeat_count, repeat_done_count
+                   repeat_count, repeat_done_count, source_batch_id
             FROM tasks
             WHERE status = 0
               AND reminded_at IS NULL
@@ -516,6 +522,39 @@ impl super::Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// 查最早一条「待提醒」任务的 effective_remind_at（含已逾期的）。
+    /// 返回字符串 'YYYY-MM-DD HH:MM:SS'（local），无待提醒任务时返回 None。
+    /// 调度器据此 sleep_until 精准触发，避免轮询空跑。
+    pub fn peek_next_due_at(
+        &self,
+        all_day_base_time: &str,
+    ) -> Result<Option<String>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let sql = "
+            SELECT MIN(datetime(
+                CASE WHEN LENGTH(due_date) <= 10
+                     THEN due_date || ' ' || ?1
+                     ELSE due_date END,
+                '-' || remind_before_minutes || ' minutes'
+            )) AS next_at
+            FROM tasks
+            WHERE status = 0
+              AND reminded_at IS NULL
+              AND due_date IS NOT NULL
+              AND remind_before_minutes IS NOT NULL
+        ";
+        // MIN 在无匹配行时返回一行 NULL，所以走 `Option<String>` 接收避免 InvalidColumnType
+        let next: Option<String> = conn.query_row(
+            sql,
+            params![all_day_base_time],
+            |row| row.get::<_, Option<String>>(0),
+        )?;
+        Ok(next)
     }
 
     /// 标记任务已触发提醒（写入当前时刻到 reminded_at）

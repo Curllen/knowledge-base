@@ -20,6 +20,10 @@ pub struct AppState {
     pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,
     /// 自动同步调度器唤醒信号：配置变更时 notify_one 重载
     pub sync_scheduler_notify: Arc<Notify>,
+    /// 待办提醒调度器唤醒信号：用户增/改/删/snooze 任务时 notify_one，
+    /// 调度器立刻重新计算"下一个最早提醒时刻"并重 sleep。
+    /// 这样实现的精度 ~毫秒，且空闲时零 DB 查询（只在事件驱动 + 5min 兜底唤醒时扫）。
+    pub reminder_notify: Arc<Notify>,
     /// 启动时 argv 里的 .md 文件路径，等前端 mount 后 take 出来
     pub pending_open_md_path: Mutex<Option<String>>,
     /// T-007 笔记加密保险库：内存中的主密钥（可选），锁定时清空
@@ -41,6 +45,7 @@ impl AppState {
             instance_id,
             ai_cancel: Mutex::new(std::collections::HashMap::new()),
             sync_scheduler_notify: Arc::new(Notify::new()),
+            reminder_notify: Arc::new(Notify::new()),
             pending_open_md_path: Mutex::new(None),
             vault: RwLock::new(VaultState::default()),
             _lock_file: lock_file,

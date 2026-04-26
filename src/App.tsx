@@ -44,8 +44,26 @@ function App() {
       s.bumpNotesRefresh();
       s.bumpFoldersRefresh();
       s.bumpTagsRefresh();
+      s.bumpTasksListRefresh();
       s.refreshTaskStats();
       message.success("数据已重载");
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  // 紧急窗口（独立 webview）改完任务后通过 Tauri 事件通知主窗刷新列表/角标。
+  // Zustand store 是 per-webview 的，子窗口 set state 主窗拿不到，所以必须走事件桥。
+  useEffect(() => {
+    if (!IS_MAIN_WINDOW) return;
+    let unlisten: (() => void) | undefined;
+    listen("tasks:list-refresh", () => {
+      const s = useAppStore.getState();
+      s.bumpTasksListRefresh();
+      void s.refreshTaskStats();
     }).then((fn) => {
       unlisten = fn;
     });

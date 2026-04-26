@@ -1,53 +1,122 @@
 //! 待办任务定时提醒调度器
 //!
-//! 后台 tokio 任务，每分钟扫一次 `tasks` 表：命中"到提醒点但尚未提醒过"的
-//! 未完成任务后，发系统通知 + 推 `task:reminder` 事件给前端，并根据是否为
-//! 循环任务选择两种推进策略：
+//! 事件驱动 + 兜底唤醒的混合策略（同 Quartz / Sidekiq / BullMQ 思路）：
 //!
-//! - 一次性任务：写 `reminded_at = now()`，避免重复触发
-//! - 循环任务：调用 `advance_recurrence` 把 `due_date` 推进到下一次 > now
-//!   的时刻（合并中间漏掉的多次，只通知一次），同时累计 `repeat_done_count`；
-//!   若触达 `repeat_until` / `repeat_count` 上限则直接写 status=1
+//! 1. 主循环每次开始先查 DB 最早 effective_remind_at → `tokio::time::sleep_until` 精确睡到那一刻
+//! 2. 用户增 / 改 / 删 / snooze 任务时，命令层调 `state.reminder_notify.notify_one()`
+//!    → `select!` 中断 sleep → 重算下一次唤醒
+//! 3. 没任务时 sleep 5 分钟兜底（防御 OS 休眠 / 时钟跳变 / 漏 emit notify 等极端情况）
+//! 4. 醒来后扫一次 due，按 priority 派发：
+//!    - priority == 0：开全屏接管窗口（前端循环铃声 + 抢焦点）
+//!    - 其它：闪烁主窗任务栏 + emit `task:reminder` 让主窗弹 antd Modal
 //!
-//! 触发条件由 SQL 侧计算（见 `Database::list_due_reminders`），这里只负责
-//! 周期调度与副作用分发。
+//! 精度：~毫秒级。空闲零 DB 查询。
 
 use std::time::Duration;
 
+use chrono::NaiveDateTime;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::error::AppError;
 use crate::state::AppState;
 
-/// 扫描周期：1 分钟（足够精确，且避免对 DB 造成压力）
-const TICK_INTERVAL_SECS: u64 = 60;
+/// 没有待提醒任务时的兜底唤醒间隔：避免长时间不动后被 OS 休眠 / 时钟跳变拖错时间
+const IDLE_SAFETY_INTERVAL: Duration = Duration::from_secs(300);
+/// 单次 sleep 上限：即使下一次提醒还很远（比如几天后），也每隔这么久醒一次自检
+const MAX_SLEEP: Duration = Duration::from_secs(300);
 
 /// 启动调度循环。进程存活期间常驻。
 pub async fn run_reminder_loop(app: AppHandle) {
-    log::info!("[reminder] 调度器已启动");
-    let mut interval = tokio::time::interval(Duration::from_secs(TICK_INTERVAL_SECS));
-    // 第一次 tick 会立即返回（默认 Immediate），跳过避免启动时就扫一轮
-    interval.tick().await;
+    log::info!("[reminder] 调度器已启动（事件驱动模式）");
+
+    // 启动时立刻扫一次：捕获"应用关闭期间已逾期"的任务
+    if let Err(e) = tick_once(&app) {
+        log::warn!("[reminder] 启动 tick 失败: {}", e);
+    }
 
     loop {
-        interval.tick().await;
+        let notify = {
+            let state = app.state::<AppState>();
+            state.reminder_notify.clone()
+        };
+        let sleep_dur = compute_sleep_duration(&app);
+
+        // 关键顺序：先建 notified() future，再 sleep；这样在我们计算 sleep 期间
+        // 来的 notify_one 也不会丢——Notify 内部会保留一次"待消费的 permit"
+        let notified_fut = notify.notified();
+        tokio::pin!(notified_fut);
+
+        tokio::select! {
+            _ = tokio::time::sleep(sleep_dur) => {
+                log::debug!("[reminder] sleep 唤醒（{:?}）", sleep_dur);
+            }
+            _ = &mut notified_fut => {
+                log::debug!("[reminder] notify 唤醒（任务变更）");
+            }
+        }
+
         if let Err(e) = tick_once(&app) {
             log::warn!("[reminder] tick 失败: {}", e);
         }
     }
 }
 
-fn tick_once(app: &AppHandle) -> Result<(), AppError> {
+/// 计算下次该 sleep 多久：
+/// - 有最早 effective_remind_at = T：sleep `T - now`，但封顶 MAX_SLEEP（防 OS 时钟乱跳）
+/// - T 已过：sleep 0（立刻进 tick_once）
+/// - 没待提醒任务：sleep IDLE_SAFETY_INTERVAL
+fn compute_sleep_duration(app: &AppHandle) -> Duration {
     let state = app.state::<AppState>();
-    // 读全天任务提醒基准时刻，默认 09:00；兼容 "HH:MM" 和 "HH:MM:SS"
-    let base_time = state
+    let base_time = read_base_time(&state);
+
+    let next = match state.db.peek_next_due_at(&base_time) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[reminder] peek_next_due_at 失败: {}, 退化为 5min 轮询", e);
+            return IDLE_SAFETY_INTERVAL;
+        }
+    };
+
+    let Some(next_str) = next else {
+        return IDLE_SAFETY_INTERVAL;
+    };
+
+    let Ok(next_dt) = NaiveDateTime::parse_from_str(&next_str, "%Y-%m-%d %H:%M:%S") else {
+        log::warn!("[reminder] 无法解析下次提醒时刻: {}, 退化为 5min 轮询", next_str);
+        return IDLE_SAFETY_INTERVAL;
+    };
+
+    let now = chrono::Local::now().naive_local();
+    let delta = next_dt.signed_duration_since(now);
+    if delta.num_milliseconds() <= 0 {
+        return Duration::ZERO;
+    }
+    let std_dur = delta
+        .to_std()
+        .unwrap_or(IDLE_SAFETY_INTERVAL)
+        .min(MAX_SLEEP);
+    log::debug!(
+        "[reminder] 下次提醒 {} (in {:?})",
+        next_str,
+        std_dur
+    );
+    std_dur
+}
+
+fn read_base_time(state: &AppState) -> String {
+    state
         .db
         .get_config("all_day_reminder_time")
         .ok()
         .flatten()
         .map(|s| if s.len() == 5 { format!("{}:00", s) } else { s })
-        .unwrap_or_else(|| "09:00:00".to_string());
+        .unwrap_or_else(|| "09:00:00".to_string())
+}
+
+fn tick_once(app: &AppHandle) -> Result<(), AppError> {
+    let state = app.state::<AppState>();
+    let base_time = read_base_time(&state);
     let due = state.db.list_due_reminders(&base_time)?;
     if due.is_empty() {
         return Ok(());
@@ -106,14 +175,16 @@ fn tick_once(app: &AppHandle) -> Result<(), AppError> {
                         "[reminder] 紧急窗口创建失败，回退主窗 Modal: {}",
                         e
                     );
-                    flash_main_taskbar(app);
+                    surface_main_window(app);
                     if let Err(e) = app.emit("task:reminder", &task) {
                         log::warn!("[reminder] emit 事件失败: {}", e);
                     }
                 }
             }
         } else {
-            flash_main_taskbar(app);
+            // 普通/重要级：主窗如果被最小化或隐藏到托盘，必须先把它拉出来
+            // 否则 Modal 弹在隐藏的主窗里用户看不见，只剩右下角系统通知 → 没法标记完成
+            surface_main_window(app);
             if let Err(e) = app.emit("task:reminder", &task) {
                 log::warn!("[reminder] emit 事件失败: {}", e);
             }
@@ -122,9 +193,14 @@ fn tick_once(app: &AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 闪烁主窗口任务栏抢用户注意（强烈级）
-fn flash_main_taskbar(app: &AppHandle) {
+/// 把主窗口拉到前台 + 闪烁任务栏抢用户注意。
+/// 用于普通/重要级提醒：用户可能把主窗最小化或隐藏到托盘了，必须先 show + unminimize +
+/// set_focus，否则 Modal 弹在隐藏窗口里用户看不见，只剩右下角系统通知 → 用户无从操作。
+fn surface_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
         let _ = win.request_user_attention(Some(tauri::UserAttentionType::Critical));
     }
 }
