@@ -394,6 +394,45 @@ impl super::Database {
         Ok(affected > 0)
     }
 
+    /// 批量删除任务（多选场景）。task_links 由 ON DELETE CASCADE 自动清理。
+    /// 返回实际删除条数；空 ids 返回 0。
+    pub fn delete_tasks_by_ids(&self, ids: &[i64]) -> Result<usize, AppError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("DELETE FROM tasks WHERE id IN ({})", placeholders);
+        let affected = conn.execute(&sql, rusqlite::params_from_iter(ids))?;
+        Ok(affected)
+    }
+
+    /// 批量标记任务为已完成（多选场景）。循环任务也直接置为完成态，不推进周期。
+    /// 返回实际更新条数。
+    pub fn complete_tasks_by_ids(&self, ids: &[i64]) -> Result<usize, AppError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "UPDATE tasks
+                SET status = 1,
+                    completed_at = datetime('now','localtime'),
+                    updated_at = datetime('now','localtime')
+              WHERE id IN ({}) AND status = 0",
+            placeholders
+        );
+        let affected = conn.execute(&sql, rusqlite::params_from_iter(ids))?;
+        Ok(affected)
+    }
+
     // ─── 关联（task_links）────────────────────
 
     pub fn add_task_link(&self, task_id: i64, input: TaskLinkInput) -> Result<i64, AppError> {
@@ -582,20 +621,6 @@ impl super::Database {
             params![batch_id],
         )?;
         Ok(affected)
-    }
-
-    /// 统计某批次的任务数（用于在 UI 上显示「最近一次 AI 导入 N 条，可撤销」）
-    pub fn count_tasks_in_batch(&self, batch_id: &str) -> Result<usize, AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Custom(e.to_string()))?;
-        let n: usize = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE source_batch_id = ?1",
-            params![batch_id],
-            |row| row.get(0),
-        )?;
-        Ok(n)
     }
 }
 

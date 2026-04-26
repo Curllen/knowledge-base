@@ -1340,7 +1340,7 @@ impl AiService {
              严格返回 JSON 对象，不要 markdown 代码块，不要任何额外文字，格式如下：\n\
              {{\n  \
              \"tasks\": [\n    \
-             {{\"title\": \"任务标题（简洁可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"{}\", \"reason\": \"为什么建议做这条\"}}\n  \
+             {{\"title\": \"任务标题（简洁可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"{}\", \"remindBefore\": null|0|15|30|60|180|1440|10080, \"reason\": \"为什么建议做这条\"}}\n  \
              ],\n  \
              \"summary\": \"今日总体思路（一句话）\"\n\
              }}\n\n\
@@ -1352,6 +1352,13 @@ impl AiService {
              - Q2 不紧急+重要 (priority=1或2, important=true)：长期受益，每天至少 1-2 条（学习、锻炼、复盘）\n\
              - Q3 紧急+不重要 (priority=0, important=false)：能委派就委派，否则快速处理\n\
              - Q4 不紧急+不重要 (priority=2, important=false)：尽量少安排，能删则删\n\n\
+             ⏰ remindBefore 提醒策略（单位分钟，按象限智能选择）：\n\
+             - Q1 紧急重要：0（准时提醒）或 15（提前 15 分钟）\n\
+             - Q2 重要不紧急：60（提前 1 小时）或 1440（提前 1 天）\n\
+             - Q3 紧急不重要：0 或 15\n\
+             - Q4 不重要不紧急：null（不打扰）\n\
+             - 仪式感强 / 容易被遗忘的任务（如健身、读书）→ 1440\n\
+             可选值固定：null / 0 / 15 / 30 / 60 / 180 / 1440 / 10080；其他值视为 null。\n\n\
              其他规则：\n\
              1. dueDate 都填成 {}\n\
              2. title 必须是可执行动作（如『完成 xx』、『写 xx』），不要模糊项如『放松一下』\n\
@@ -1627,7 +1634,7 @@ impl AiService {
              严格返回 JSON 对象，不要 markdown 代码块、不要任何额外文字，格式如下：\n\
              {{\n  \
              \"tasks\": [\n    \
-             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"reason\": \"为什么做这条 + Q几\"}}\n  \
+             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"remindBefore\": null|0|15|30|60|180|1440|10080, \"reason\": \"为什么做这条 + Q几\"}}\n  \
              ],\n  \
              \"milestones\": [\n    \
              {{\"title\": \"阶段标题（如『第1月：身体激活』）\", \"dateRange\": \"5月1日-5月31日\", \"description\": \"该阶段重点\"}}\n  \
@@ -1642,6 +1649,13 @@ impl AiService {
              - Q2 不紧急+重要 (1或2,true)：长期投入、积累型任务，应占主体（>60%）\n\
              - Q3 紧急+不重要 (0,false)：处理一下就行的琐事\n\
              - Q4 不紧急+不重要 (1或2,false)：能不做就不做\n\n\
+             ⏰ remindBefore 提醒策略（分钟）：\n\
+             - Q1 紧急重要：0（准时）或 15\n\
+             - Q2 重要不紧急：60 / 1440（提前 1 天）/ 10080（提前 1 周，适合习惯类）\n\
+             - Q3 紧急不重要：0 或 15\n\
+             - Q4：null（不打扰）\n\
+             - 仪式感任务（健身、学习打卡）→ 1440 让用户提前一天看到；deadline 类→ 0 准时提醒\n\
+             可选值固定：null / 0 / 15 / 30 / 60 / 180 / 1440 / 10080。\n\n\
              其他规则：\n\
              1. dueDate 必须落在 {} ~ {} 范围内，按计划进度合理铺开\n\
              2. 任务粒度要可执行，避免『加油』『坚持』之类不可量化的词\n\
@@ -1804,7 +1818,7 @@ impl AiService {
              严格返回 JSON 对象，不要 markdown 代码块、不要任何额外文字，格式如下：\n\
              {{\n  \
              \"tasks\": [\n    \
-             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"reason\": \"为什么做这条 + Q几\"}}\n  \
+             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"remindBefore\": null|0|15|30|60|180|1440|10080, \"reason\": \"为什么做这条 + Q几\"}}\n  \
              ],\n  \
              \"milestones\": [\n    \
              {{\"title\": \"阶段标题（如『第1月：身体激活』）\", \"dateRange\": \"5月1日-5月31日\", \"description\": \"该阶段重点\"}}\n  \
@@ -1819,6 +1833,14 @@ impl AiService {
              - Q2 不紧急+重要 (1或2,true)：长期投入、积累型任务，应占主体（>60%）\n\
              - Q3 紧急+不重要 (0,false)：处理一下就行的琐事\n\
              - Q4 不紧急+不重要 (1或2,false)：能不做就不做\n\n\
+             ⏰ remindBefore 提醒策略（分钟）：\n\
+             - Q1 紧急重要：0（准时）或 15\n\
+             - Q2 重要不紧急：60 / 1440 / 10080（习惯打卡型适合提前 1 周也提醒）\n\
+             - Q3 紧急不重要：0 或 15\n\
+             - Q4：null（不打扰）\n\
+             - 健身 / 学习 / 服药 / 早睡这类容易遗忘的习惯任务 → 1440\n\
+             - 一次性 deadline 任务 → 0 准时提醒\n\
+             可选值固定：null / 0 / 15 / 30 / 60 / 180 / 1440 / 10080。\n\n\
              重要的提取规则：\n\
              1. dueDate 必须落在 {} ~ {} 范围内，按 Excel 暗示的时间节奏铺开\n\
              2. **不要原样抄录 Excel 行**，要提炼成可执行动作（如『完成 xx』『建立 xx 习惯』）\n\

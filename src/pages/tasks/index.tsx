@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Input,
   Button,
+  Checkbox,
   Typography,
   Tooltip,
   Empty,
@@ -14,7 +15,6 @@ import {
 } from "antd";
 import {
   CheckSquare,
-  Plus,
   Search,
   AlertTriangle,
   Sun,
@@ -25,12 +25,10 @@ import {
   Link as LinkIcon,
   Trash2,
   Edit3,
-  Sparkles,
-  Target,
+  ListChecks,
+  X as IconX,
 } from "lucide-react";
-import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
-import { PlanFromGoalModal } from "@/components/ai/PlanFromGoalModal";
-import { aiPlanApi } from "@/lib/api";
+import { NewTodoButton } from "@/components/NewTodoButton";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
@@ -240,13 +238,38 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [showPlanModal, setShowPlanModal] = useState(false);
-  const [showGoalModal, setShowGoalModal] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
   const [presetImportant, setPresetImportant] = useState<boolean | undefined>(undefined);
   const [presetDueDate, setPresetDueDate] = useState<string | undefined>(undefined);
+
+  // 多选模式（仅 list 视图，切到 kanban/quadrant/calendar 自动退出）
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+  function exitMultiSelect() {
+    setMultiSelect(false);
+    setSelectedIds(new Set());
+  }
+  // 切视图时自动退出多选
+  useEffect(() => {
+    if (viewMode !== "list" && multiSelect) {
+      exitMultiSelect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   // SidePanel 传 ?new=1 唤起新建 Modal（一次性，消费后清掉参数）
   useEffect(() => {
@@ -338,6 +361,37 @@ export default function TasksPage() {
     }
   }
 
+  // ─── 批量操作（多选模式）────────────────────
+  async function handleBatchDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    try {
+      const removed = await taskApi.deleteBatch(ids);
+      message.success(`已删除 ${removed} 条任务`);
+      exitMultiSelect();
+      await loadTasks();
+    } catch (e) {
+      message.error(`批量删除失败: ${e}`);
+    }
+  }
+  async function handleBatchComplete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    try {
+      const updated = await taskApi.completeBatch(ids);
+      message.success(`已标记完成 ${updated} 条任务`);
+      exitMultiSelect();
+      await loadTasks();
+    } catch (e) {
+      message.error(`批量完成失败: ${e}`);
+    }
+  }
+  /** 全选当前可见的未完成任务（已完成的不参与，避免误操作） */
+  function selectAllVisible() {
+    const ids = tasks.filter((t) => t.status === 0).map((t) => t.id);
+    setSelectedIds(new Set(ids));
+  }
+
   async function handleOpenLink(link: Task["links"][number]) {
     try {
       if (link.kind === "note") {
@@ -378,32 +432,29 @@ export default function TasksPage() {
               { label: "日历", value: "calendar" },
             ]}
           />
-          <Button
-            icon={<Sparkles size={14} />}
-            onClick={() => setShowPlanModal(true)}
-            title="AI 根据笔记与现有待办，给出 3~7 条今日建议"
-          >
-            AI 规划今日
-          </Button>
-          <Button
-            icon={<Target size={14} />}
-            onClick={() => setShowGoalModal(true)}
-            title="输入长期目标，AI 用艾森豪威尔四象限自动拆出 10~30 条待办"
-          >
-            AI 智能规划
-          </Button>
-          <Button
-            type="primary"
-            icon={<Plus size={14} />}
-            onClick={() => {
-              setPresetPriority(undefined);
-              setPresetImportant(undefined);
-              setPresetDueDate(undefined);
-              setCreateOpen(true);
+          {viewMode === "list" && (
+            <Button
+              icon={multiSelect ? <IconX size={14} /> : <ListChecks size={14} />}
+              onClick={() => {
+                if (multiSelect) {
+                  exitMultiSelect();
+                } else {
+                  setMultiSelect(true);
+                  setSelectedIds(new Set());
+                }
+              }}
+              title={multiSelect ? "退出多选" : "进入多选模式（批量删除/完成）"}
+              type={multiSelect ? "primary" : "default"}
+            >
+              {multiSelect ? "退出多选" : "多选"}
+            </Button>
+          )}
+          <NewTodoButton
+            onSaved={() => {
+              loadTasks();
+              useAppStore.getState().refreshTaskStats();
             }}
-          >
-            新建任务
-          </Button>
+          />
         </div>
       </div>
 
@@ -495,6 +546,9 @@ export default function TasksPage() {
               onEdit={setEditing}
               onOpenLink={handleOpenLink}
               token={token}
+              multiSelect={multiSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           )}
           {grouped.today.length > 0 && (
@@ -508,6 +562,9 @@ export default function TasksPage() {
               onEdit={setEditing}
               onOpenLink={handleOpenLink}
               token={token}
+              multiSelect={multiSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           )}
           {grouped.upcoming.length > 0 && (
@@ -521,6 +578,9 @@ export default function TasksPage() {
               onEdit={setEditing}
               onOpenLink={handleOpenLink}
               token={token}
+              multiSelect={multiSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           )}
           {grouped.noDate.length > 0 && (
@@ -533,6 +593,9 @@ export default function TasksPage() {
               onEdit={setEditing}
               onOpenLink={handleOpenLink}
               token={token}
+              multiSelect={multiSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           )}
           {filter === "todo"
@@ -572,6 +635,9 @@ export default function TasksPage() {
                   onEdit={setEditing}
                   onOpenLink={handleOpenLink}
                   token={token}
+                  multiSelect={multiSelect}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
                 />
               )
             : grouped.done.length > 0 && (
@@ -584,8 +650,70 @@ export default function TasksPage() {
                   onEdit={setEditing}
                   onOpenLink={handleOpenLink}
                   token={token}
+                  multiSelect={multiSelect}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
                 />
               )}
+        </div>
+      )}
+
+      {/* 多选模式底部 ActionBar：浮在屏幕底部，仅 list 视图 + 选中至少 1 条时显示 */}
+      {multiSelect && viewMode === "list" && selectedIds.size > 0 && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-full shadow-lg"
+          style={{
+            bottom: 24,
+            background: token.colorBgElevated,
+            border: `1px solid ${token.colorBorder}`,
+            boxShadow: token.boxShadow,
+          }}
+        >
+          <span className="text-xs" style={{ color: token.colorTextSecondary }}>
+            已选 <strong style={{ color: token.colorPrimary }}>{selectedIds.size}</strong> 条
+          </span>
+          <Button
+            size="small"
+            type="link"
+            onClick={selectAllVisible}
+            style={{ padding: 0 }}
+          >
+            全选未完成
+          </Button>
+          <Button
+            size="small"
+            type="link"
+            onClick={clearSelection}
+            style={{ padding: 0 }}
+          >
+            清空
+          </Button>
+          <span style={{ color: token.colorBorderSecondary }}>|</span>
+          <Button
+            size="small"
+            icon={<CheckSquare size={12} />}
+            onClick={handleBatchComplete}
+          >
+            标记完成
+          </Button>
+          <Popconfirm
+            title={`确认删除选中的 ${selectedIds.size} 条任务？`}
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={handleBatchDelete}
+          >
+            <Button size="small" danger icon={<Trash2 size={12} />}>
+              删除
+            </Button>
+          </Popconfirm>
+          <Button
+            size="small"
+            type="text"
+            icon={<IconX size={12} />}
+            onClick={exitMultiSelect}
+            title="退出多选"
+          />
         </div>
       )}
 
@@ -615,47 +743,7 @@ export default function TasksPage() {
           loadTasks();
         }}
       />
-      <PlanTodayModal
-        open={showPlanModal}
-        onClose={() => setShowPlanModal(false)}
-        onSaved={() => {
-          // 刷新列表 + 侧边栏紧急待办计数
-          loadTasks();
-          useAppStore.getState().refreshTaskStats();
-        }}
-      />
-      <PlanFromGoalModal
-        open={showGoalModal}
-        onClose={() => setShowGoalModal(false)}
-        onSaved={(batchId, count) => {
-          loadTasks();
-          useAppStore.getState().refreshTaskStats();
-          // 提供"撤销整批"按钮（5 秒后自动消失）
-          message.success({
-            content: (
-              <span>
-                AI 智能规划：已导入 {count} 条待办{" "}
-                <a
-                  style={{ marginLeft: 8 }}
-                  onClick={async () => {
-                    try {
-                      const removed = await aiPlanApi.undoBatch(batchId);
-                      message.info(`已撤销 ${removed} 条`);
-                      loadTasks();
-                      useAppStore.getState().refreshTaskStats();
-                    } catch (e) {
-                      message.error(`撤销失败: ${e}`);
-                    }
-                  }}
-                >
-                  撤销整批
-                </a>
-              </span>
-            ),
-            duration: 8,
-          });
-        }}
-      />
+      {/* AI 规划 / 添加待办的三个 Modal 已封装进 NewTodoButton；本页面不再单独挂 */}
     </div>
   );
 }
@@ -672,6 +760,10 @@ interface SectionProps {
   onDelete: (t: Task) => void;
   onEdit: (t: Task) => void;
   onOpenLink: (l: Task["links"][number]) => void;
+  /** 多选态相关；undefined 表示非多选态 */
+  multiSelect?: boolean;
+  selectedIds?: Set<number>;
+  onToggleSelect?: (id: number) => void;
   /** 显式隐藏标题的留口（备用） */
   hideHeader?: boolean;
 }
@@ -687,6 +779,9 @@ function TaskSection({
   onDelete,
   onEdit,
   onOpenLink,
+  multiSelect,
+  selectedIds,
+  onToggleSelect,
   hideHeader,
 }: SectionProps) {
   return (
@@ -717,6 +812,9 @@ function TaskSection({
             onDelete={onDelete}
             onEdit={onEdit}
             onOpenLink={onOpenLink}
+            multiSelect={multiSelect}
+            selected={selectedIds?.has(t.id)}
+            onToggleSelect={onToggleSelect}
           />
         ))}
       </div>
@@ -732,36 +830,71 @@ interface RowProps {
   onDelete: (t: Task) => void;
   onEdit: (t: Task) => void;
   onOpenLink: (l: Task["links"][number]) => void;
+  multiSelect?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
 }
 
-function TaskRow({ task, isLast, token, onToggle, onDelete, onEdit, onOpenLink }: RowProps) {
+function TaskRow({
+  task,
+  isLast,
+  token,
+  onToggle,
+  onDelete,
+  onEdit,
+  onOpenLink,
+  multiSelect,
+  selected,
+  onToggleSelect,
+}: RowProps) {
   const done = task.status === 1;
   const due = describeDueDate(task.due_date);
+  const isSelected = !!selected;
   return (
     <div
       className="group flex items-start gap-3 px-4 py-3 transition"
       style={{
         borderBottom: isLast ? "none" : `1px solid ${token.colorBorderSecondary}`,
+        background:
+          multiSelect && isSelected ? token.colorPrimaryBg : "transparent",
+        cursor: multiSelect ? "pointer" : "default",
       }}
+      onClick={
+        multiSelect ? () => onToggleSelect?.(task.id) : undefined
+      }
     >
-      {/* 完成勾选 */}
-      <Tooltip title={done ? "标记为未完成" : "标记为已完成"}>
-        <button
-          onClick={() => onToggle(task)}
-          className="mt-0.5 rounded-full flex items-center justify-center transition cursor-pointer shrink-0"
-          style={{
-            width: 18,
-            height: 18,
-            border: done
-              ? `1.5px solid ${token.colorSuccess}`
-              : `1.5px solid ${token.colorBorder}`,
-            background: done ? token.colorSuccess : "transparent",
-            color: "#fff",
-          }}
-        >
-          {done && <ChevronRight size={12} style={{ transform: "rotate(90deg) scale(0.9)" }} />}
-        </button>
-      </Tooltip>
+      {/* 多选态：复选框；普通态：完成勾选 */}
+      {multiSelect ? (
+        <Checkbox
+          checked={isSelected}
+          onChange={() => onToggleSelect?.(task.id)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ marginTop: 2 }}
+        />
+      ) : (
+        <Tooltip title={done ? "标记为未完成" : "标记为已完成"}>
+          <button
+            onClick={() => onToggle(task)}
+            className="mt-0.5 rounded-full flex items-center justify-center transition cursor-pointer shrink-0"
+            style={{
+              width: 18,
+              height: 18,
+              border: done
+                ? `1.5px solid ${token.colorSuccess}`
+                : `1.5px solid ${token.colorBorder}`,
+              background: done ? token.colorSuccess : "transparent",
+              color: "#fff",
+            }}
+          >
+            {done && (
+              <ChevronRight
+                size={12}
+                style={{ transform: "rotate(90deg) scale(0.9)" }}
+              />
+            )}
+          </button>
+        </Tooltip>
+      )}
 
       {/* 紧急度圆点 */}
       <span
@@ -859,26 +992,28 @@ function TaskRow({ task, isLast, token, onToggle, onDelete, onEdit, onOpenLink }
         )}
       </div>
 
-      {/* hover 操作 */}
-      <div className="opacity-0 group-hover:opacity-100 transition flex items-center gap-1 shrink-0">
-        <Tooltip title="编辑">
-          <Button
-            type="text"
-            size="small"
-            icon={<Edit3 size={12} />}
-            onClick={() => onEdit(task)}
-          />
-        </Tooltip>
-        <Popconfirm
-          title="确定删除？"
-          okText="删除"
-          okButtonProps={{ danger: true }}
-          cancelText="取消"
-          onConfirm={() => onDelete(task)}
-        >
-          <Button type="text" size="small" icon={<Trash2 size={12} />} danger />
-        </Popconfirm>
-      </div>
+      {/* hover 操作（多选态下隐藏，避免误触） */}
+      {!multiSelect && (
+        <div className="opacity-0 group-hover:opacity-100 transition flex items-center gap-1 shrink-0">
+          <Tooltip title="编辑">
+            <Button
+              type="text"
+              size="small"
+              icon={<Edit3 size={12} />}
+              onClick={() => onEdit(task)}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="确定删除？"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={() => onDelete(task)}
+          >
+            <Button type="text" size="small" icon={<Trash2 size={12} />} danger />
+          </Popconfirm>
+        </div>
+      )}
     </div>
   );
 }

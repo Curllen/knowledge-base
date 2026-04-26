@@ -45,6 +45,30 @@ pub fn delete_task(state: State<'_, AppState>, id: i64) -> Result<bool, String> 
     TaskService::delete(&state.db, id).map_err(|e| e.to_string())
 }
 
+/// 批量删除任务（任务页多选模式用）。返回实际删除的条数。
+#[tauri::command]
+pub fn delete_tasks_batch(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+) -> Result<usize, String> {
+    state
+        .db
+        .delete_tasks_by_ids(&ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 批量标记任务为已完成（任务页多选模式用）。返回实际更新条数。
+#[tauri::command]
+pub fn complete_tasks_batch(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+) -> Result<usize, String> {
+    state
+        .db
+        .complete_tasks_by_ids(&ids)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn add_task_link(
     state: State<'_, AppState>,

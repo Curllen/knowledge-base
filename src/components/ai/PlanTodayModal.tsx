@@ -39,6 +39,17 @@ const PRIORITY_OPTIONS = [
   { value: 2, label: "低" },
 ];
 
+const REMIND_OPTIONS = [
+  { value: null, label: "不提醒" },
+  { value: 0, label: "准时" },
+  { value: 15, label: "提前15分" },
+  { value: 30, label: "提前30分" },
+  { value: 60, label: "提前1小时" },
+  { value: 180, label: "提前3小时" },
+  { value: 1440, label: "提前1天" },
+  { value: 10080, label: "提前1周" },
+];
+
 /** 由 priority + important 推导四象限 */
 function quadrantOf(priority?: number | null, important?: boolean | null): {
   num: 1 | 2 | 3 | 4;
@@ -149,6 +160,8 @@ export function PlanTodayModal({ open, onClose, onSaved }: PlanTodayModalProps) 
           priority: (d.priority ?? 1) as 0 | 1 | 2,
           important: !!d.important,
           due_date: d.dueDate ?? todayStr(),
+          remind_before_minutes:
+            d.remindBefore === undefined ? null : d.remindBefore,
         });
         okCount++;
       } catch (e) {
@@ -410,6 +423,14 @@ function DraftRow({
               onChange={(e) => onChange({ dueDate: e.target.value })}
               placeholder="YYYY-MM-DD"
               style={{ width: 120 }}
+            />
+            <Select
+              size="small"
+              value={draft.remindBefore ?? null}
+              onChange={(v) => onChange({ remindBefore: v })}
+              options={REMIND_OPTIONS}
+              style={{ width: 110 }}
+              title="AI 自动设置的提醒时间，可改"
             />
           </div>
           {draft.reason && (
