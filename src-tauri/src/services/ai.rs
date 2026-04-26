@@ -1723,6 +1723,209 @@ impl AiService {
 
         Ok(parsed)
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Excel 文件 → AI 智能规划（plan_from_excel）
+    // ══════════════════════════════════════════════════════════════════
+
+    /// 用户上传一个 Excel/ODS 文件 → calamine 解析为 markdown 多 Sheet 表 → 喂 AI 拆四象限待办。
+    ///
+    /// 与 `plan_from_goal` 的区别：本方法以 Excel 内容作为主要素材，AI 从中提炼可执行任务，
+    /// 而不是从用户的一段文字目标拆分。
+    ///
+    /// 自动截断策略：
+    /// - 单 Sheet > 30k 字符 → 取头 40 行 + 尾 10 行
+    /// - 总长度 > 60k 字符 → 对最大的几个 Sheet 进一步截断
+    /// - 截断信息通过 `warnings` 字段返回给前端，UI 友好提示
+    pub async fn plan_from_excel(
+        db: &Database,
+        req: PlanFromExcelRequest,
+    ) -> Result<PlanFromGoalResponse, AppError> {
+        let file_path = req.file_path.trim();
+        if file_path.is_empty() {
+            return Err(AppError::InvalidInput("Excel 文件路径不能为空".into()));
+        }
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            return Err(AppError::Custom(format!("文件不存在: {}", file_path)));
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Excel")
+            .to_string();
+
+        let model = db.get_default_ai_model()?;
+        if model.provider == "ollama" {
+            return Err(AppError::Custom(
+                "AI 智能规划暂不支持 Ollama 协议，请切换到 OpenAI 兼容模型（含本地 LM Studio）。"
+                    .into(),
+            ));
+        }
+
+        // 解析 Excel → 多 Sheet 快照 + markdown 全文
+        let summary = crate::services::excel_parser::read_workbook(file_path)?;
+
+        let horizon = req.horizon_days.clamp(1, 365);
+        let start_date = req
+            .start_date
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+        let end_date = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
+            .ok()
+            .map(|d| d + chrono::Duration::days((horizon as i64) - 1))
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| start_date.clone());
+
+        let extra_section = req
+            .extra_goal
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("\n\n## 用户额外说明\n{}", s))
+            .unwrap_or_default();
+
+        let user_content = format!(
+            "请基于以下 Excel 表格内容，按艾森豪威尔四象限法则规划一个 {} 天的可执行计划。\n\n\
+             ## 文件\n{}\n\n\
+             ## 计划周期\n{} ~ {}（共 {} 天）{}\n\n\
+             ## Excel 内容（多 Sheet 拼接的 markdown 表）\n{}\n\n\
+             请按下方 JSON 格式严格输出（不要 markdown 代码块、不要任何解释）。",
+            horizon, file_name, start_date, end_date, horizon, extra_section, summary.markdown,
+        );
+
+        let system_prompt = format!(
+            "你是一个用艾森豪威尔四象限法则做规划的助手。\
+             用户上传了一个 Excel 文件，里面可能是计划草稿、任务清单、参考资料、时间表等混合内容。\
+             你的任务是理解 Excel 内容，把可执行部分提炼为 10~30 条具体待办 + 2~6 个阶段里程碑。\n\n\
+             严格返回 JSON 对象，不要 markdown 代码块、不要任何额外文字，格式如下：\n\
+             {{\n  \
+             \"tasks\": [\n    \
+             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"reason\": \"为什么做这条 + Q几\"}}\n  \
+             ],\n  \
+             \"milestones\": [\n    \
+             {{\"title\": \"阶段标题（如『第1月：身体激活』）\", \"dateRange\": \"5月1日-5月31日\", \"description\": \"该阶段重点\"}}\n  \
+             ],\n  \
+             \"summary\": \"整体规划思路（1~3 句，说明从 Excel 中提炼出了什么主题）\"\n\
+             }}\n\n\
+             ⚠️ 关键：priority 和 important 是两个独立维度！\n\
+             - priority（紧急度）：0=紧急（短期内必须完成）/ 1=一般 / 2=不急\n\
+             - important（重要性）：true=对长期目标显著贡献；false=琐事或被动响应\n\n\
+             组合成四象限：\n\
+             - Q1 紧急+重要 (0,true)：关键 deadline / 关键节点\n\
+             - Q2 不紧急+重要 (1或2,true)：长期投入、积累型任务，应占主体（>60%）\n\
+             - Q3 紧急+不重要 (0,false)：处理一下就行的琐事\n\
+             - Q4 不紧急+不重要 (1或2,false)：能不做就不做\n\n\
+             重要的提取规则：\n\
+             1. dueDate 必须落在 {} ~ {} 范围内，按 Excel 暗示的时间节奏铺开\n\
+             2. **不要原样抄录 Excel 行**，要提炼成可执行动作（如『完成 xx』『建立 xx 习惯』）\n\
+             3. 如果某些 Sheet 明显是参考资料类型（如『补剂方案』『备餐手册』『动作要点』），不要为每条生成待办，可在 milestones 或 summary 中提及\n\
+             4. 如果 Excel 含『启动清单』之类的一次性任务，每条尽量保留\n\
+             5. 如果 Excel 含『每日执行表』『时间表』，提炼为具有代表性的几条重复型任务，不要展开成几十条\n\
+             6. milestones 是阶段级总结（如月度目标），颗粒度比 tasks 大\n\
+             7. 全部用中文。\n\
+             8. 🔴 JSON 字符串字段中若需引用名称或概念，一律使用中文书名号「」或单引号 『』，严禁使用英文双引号 \"（否则会破坏 JSON 结构）。",
+            start_date, end_date,
+        );
+
+        let messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": user_content }),
+        ];
+
+        let client = crate::services::http_client::shared();
+        let url = build_openai_chat_url(&model.api_url);
+        let mut req_body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": false,
+            "response_format": { "type": "json_object" },
+            "max_tokens": 6000,
+        });
+        if model.provider == "claude" {
+            req_body
+                .as_object_mut()
+                .and_then(|m| m.remove("response_format"));
+        }
+
+        let mut builder = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&req_body);
+        if let Some(key) = &model.api_key {
+            if !key.is_empty() {
+                builder = builder.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let response = builder
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+        }
+
+        let resp_json: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
+        let content = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| {
+                AppError::Custom(
+                    "AI 返回格式异常：缺少 choices[0].message.content".to_string(),
+                )
+            })?;
+
+        let mut parsed = parse_plan_from_goal_response(content).ok_or_else(|| {
+            AppError::Custom(format!(
+                "AI 返回的 JSON 无法解析。原始响应：\n{}",
+                content.chars().take(400).collect::<String>()
+            ))
+        })?;
+
+        parsed.batch_id = generate_batch_id();
+        if parsed.tasks.is_empty() {
+            return Err(AppError::Custom(
+                "AI 没有从 Excel 中提取出任何待办，可能内容太散；建议在『额外说明』里告诉 AI 你想从 Excel 中拿什么后重试".into(),
+            ));
+        }
+
+        // 把 Excel 解析过程的提示信息透传给前端
+        parsed.warnings = build_excel_warnings(&summary, &file_name);
+
+        Ok(parsed)
+    }
+}
+
+/// 根据 Excel 解析结果生成给前端的友好警告
+fn build_excel_warnings(
+    summary: &crate::services::excel_parser::ExcelSummary,
+    file_name: &str,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !summary.truncated_sheet_names.is_empty() {
+        warnings.push(format!(
+            "Excel「{}」共 {} 行 / {} 个 Sheet，因体积较大，以下 Sheet 已截取代表性内容：{}",
+            file_name,
+            summary.total_rows,
+            summary.sheets.len(),
+            summary.truncated_sheet_names.join("、"),
+        ));
+    } else if summary.total_rows > 500 {
+        warnings.push(format!(
+            "Excel「{}」共 {} 行 / {} 个 Sheet，AI 处理可能稍慢，请耐心等待。",
+            file_name,
+            summary.total_rows,
+            summary.sheets.len(),
+        ));
+    }
+    warnings
 }
 
 /// 递归扁平化 Folder 树为 "父/子/孙" 路径字符串

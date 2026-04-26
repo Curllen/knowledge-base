@@ -620,6 +620,7 @@ pub fn run() {
             commands::ai::cancel_ai_write_assist,
             commands::ai::ai_plan_today,
             commands::ai::ai_plan_from_goal,
+            commands::ai::ai_plan_from_excel,
             commands::ai::undo_task_batch,
             commands::ai::ai_draft_note,
             commands::ai::set_ai_conversation_attached_notes,

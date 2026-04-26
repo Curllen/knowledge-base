@@ -3,8 +3,8 @@ use tokio::sync::watch;
 
 use crate::models::{
     AiConversation, AiMessage, AiModel, AiModelInput, DraftNoteRequest, DraftNoteResponse,
-    Note, NoteInput, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
-    PlanTodayResponse,
+    Note, NoteInput, PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse,
+    PlanTodayRequest, PlanTodayResponse,
 };
 use crate::services::ai::AiService;
 use crate::state::AppState;
@@ -317,6 +317,22 @@ pub fn undo_task_batch(state: State<'_, AppState>, batch_id: String) -> Result<u
     state
         .db
         .delete_tasks_by_batch(&batch_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Excel 文件 → AI 智能规划
+///
+/// 用户通过 Tauri dialog 选一个 Excel/ODS 文件，传文件绝对路径过来；
+/// 后端用 calamine 解析后喂给 AI，输出与 ai_plan_from_goal 相同的结构（含 batch_id）。
+/// 大文件会自动截断并通过 response.warnings 返回友好提示。
+#[tauri::command]
+pub async fn ai_plan_from_excel(
+    state: State<'_, AppState>,
+    request: PlanFromExcelRequest,
+) -> Result<PlanFromGoalResponse, String> {
+    let db = &state.db;
+    AiService::plan_from_excel(db, request)
+        .await
         .map_err(|e| e.to_string())
 }
 
