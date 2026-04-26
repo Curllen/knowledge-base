@@ -18,6 +18,10 @@ export const WikiLinkSuggestion = Extension.create({
         char: "[[",
         startOfLine: false,
         allowSpaces: true,
+        // 关闭"前一字符必须是空格/行首"的限制；中英混排时常见的
+        // `中文[[`、`word[[` 也应触发候选列表（对齐 Obsidian 行为）。
+        // 默认 `allowedPrefixes = [' ']` 会把这些场景拒掉。
+        allowedPrefixes: null,
         // 用户已经自己敲了 ]] 时应当退出
         allow: ({ state, range }) => {
           const before = state.doc.textBetween(

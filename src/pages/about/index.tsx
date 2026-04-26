@@ -17,6 +17,60 @@ const ZSXQ_ID = "91839984";
 
 const { Title, Text } = Typography;
 
+/**
+ * 关于页左侧锚点导航。
+ * 行为与 settings 页 SettingsAnchorNav 一致：点击 smooth 滚动 + IntersectionObserver 同步高亮。
+ */
+const ABOUT_NAV_ITEMS: { id: string; label: string }[] = [
+  { id: "about-system", label: "系统信息" },
+  { id: "about-community", label: "作者 & 社区" },
+  { id: "about-migration", label: "数据迁移说明" },
+  { id: "about-recommend", label: "推荐应用" },
+];
+
+function AboutAnchorNav() {
+  const [activeId, setActiveId] = useState<string>(ABOUT_NAV_ITEMS[0].id);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          setActiveId(visible[0].target.id);
+        }
+      },
+      { rootMargin: "0px 0px -66% 0px", threshold: 0 },
+    );
+    ABOUT_NAV_ITEMS.forEach((item) => {
+      const el = document.getElementById(item.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  function jumpTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  return (
+    <aside className="anchor-page-nav">
+      <ul>
+        {ABOUT_NAV_ITEMS.map((item) => (
+          <li
+            key={item.id}
+            data-active={activeId === item.id || undefined}
+            onClick={() => jumpTo(item.id)}
+          >
+            {item.label}
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 export default function AboutPage() {
   const navigate = useNavigate();
   const [info, setInfo] = useState<SystemInfo | null>(null);
@@ -60,7 +114,9 @@ export default function AboutPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="anchor-page-layout">
+      <AboutAnchorNav />
+      <div className="anchor-page-content" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="flex items-start justify-between gap-2">
         <div>
           <Title level={3} style={{ marginBottom: 4 }}>关于</Title>
@@ -74,7 +130,7 @@ export default function AboutPage() {
         </Button>
       </div>
 
-      <Card title="系统信息">
+      <Card id="about-system" title="系统信息">
         {loading ? (
           <div className="flex justify-center py-8">
             <Spin />
@@ -131,7 +187,7 @@ export default function AboutPage() {
         )}
       </Card>
 
-      <Card title="作者 & 社区">
+      <Card id="about-community" title="作者 & 社区">
         <Descriptions column={1} bordered size="small">
           <Descriptions.Item label="B 站主页">
             <div className="flex items-center justify-between gap-2">
@@ -161,6 +217,7 @@ export default function AboutPage() {
 
       {info && (
         <Card
+          id="about-migration"
           title="数据迁移说明"
           size="small"
         >
@@ -190,13 +247,16 @@ export default function AboutPage() {
         </Card>
       )}
 
-      <RecommendCards />
+      <div id="about-recommend">
+        <RecommendCards />
+      </div>
 
       <UpdateModal
         open={updateModalOpen}
         onClose={() => setUpdateModalOpen(false)}
         update={update}
       />
+      </div>
     </div>
   );
 }

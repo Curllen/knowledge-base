@@ -31,7 +31,7 @@ import { noteApi, dailyApi, systemApi, taskApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
-import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
+import { NewTodoButton } from "@/components/NewTodoButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
 import { useAppStore } from "@/store";
 import type { Note, DashboardStats, DailyWritingStat, TaskStats } from "@/types";
@@ -48,8 +48,6 @@ export default function HomePage() {
   const [taskStats, setTaskStats] = useState<TaskStats | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [loading, setLoading] = useState(true);
-  // 添加待办 Modal 受控（与 tasks 页用同一组件，弹出 → 写 → 保存即可）
-  const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
 
   const loadDashboard = useCallback(async () => {
@@ -215,15 +213,14 @@ export default function HomePage() {
           />
         </Col>
         <Col span={6}>
-          <Button
-            type="default"
-            icon={<CheckSquare size={15} />}
-            onClick={() => setCreateTaskOpen(true)}
+          <NewTodoButton
             block
             style={{ borderRadius: 8, height: 40 }}
-          >
-            添加待办
-          </Button>
+            onSaved={() => {
+              loadDashboard();
+              refreshTaskStats();
+            }}
+          />
         </Col>
         <Col span={6}>
           <Button
@@ -447,17 +444,8 @@ export default function HomePage() {
         </Col>
       </Row>
 
-      {/* 添加待办 Modal — 与 tasks 页同一组件；保存后刷新 stats 卡片 + 侧边栏 Badge */}
-      <CreateTaskModal
-        open={createTaskOpen}
-        onClose={() => setCreateTaskOpen(false)}
-        onSaved={() => {
-          setCreateTaskOpen(false);
-          refreshTaskStats();
-          // 同步刷新本页面"待办"统计卡片
-          taskApi.stats().then(setTaskStats).catch(() => {});
-        }}
-      />
+      {/* 「添加待办」/「AI 规划今日」/「AI 智能规划」三个 Modal 已封装进 NewTodoButton，
+          这里 onSaved 回调里刷新统计；本页面不再单独挂 Modal */}
     </div>
   );
 }

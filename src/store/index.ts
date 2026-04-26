@@ -34,6 +34,13 @@ export const SIDE_PANEL_DEFAULT_WIDTH = 240;
 const RECENT_SEARCHES_MAX = 10;
 
 /**
+ * 隐藏笔记 PIN 解锁会话有效期（毫秒）。
+ * 在此窗口内重复进 /hidden 不必再次输 PIN。
+ * 故意短一点（10 分钟）：用户离开座位后回来，新一次访问要重新验证。
+ */
+export const HIDDEN_UNLOCK_TTL_MS = 10 * 60 * 1000;
+
+/**
  * 编辑器字体族预设。
  * 值是稳定 ID，写入 store 持久化；实际 CSS font-family 链通过 EDITOR_FONT_STACKS 查表，
  * 包含若干 fallback，用户系统未装首选字体时自动退回下一项，不会变成"乱码方块"。
@@ -170,6 +177,18 @@ interface AppStore {
   setEditorLineHeight: (lineHeight: number) => void;
   /** 重置编辑器字体到默认值 */
   resetEditorTypography: () => void;
+  /**
+   * 隐藏笔记 PIN 解锁时间戳（毫秒）。
+   * null = 未解锁；与 HIDDEN_UNLOCK_TTL_MS 比对判定是否仍有效。
+   * 故意不持久化：每次启动应用都要重新验证。
+   */
+  hiddenUnlockedAt: number | null;
+  /** 标记隐藏笔记已解锁（PIN 校验通过后调用） */
+  markHiddenUnlocked: () => void;
+  /** 清除隐藏笔记解锁状态（用户主动锁定 / 修改 PIN 后调用） */
+  clearHiddenUnlock: () => void;
+  /** 当前是否在解锁有效期内 */
+  isHiddenUnlocked: () => boolean;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -236,7 +255,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pushRecentSearch: (q) => {
     const trimmed = q.trim();
     if (!trimmed) return;
+    // 太短的关键词不入历史（一两个字符通常是打字中间态，不是用户最终意图）
+    if (trimmed.length < 2) return;
     set((s) => {
+      const last = s.recentSearches[0];
+      // 前缀合并：若新词与最近一条互为前缀（用户在持续敲字），用新词替换最近一条而非新增
+      // → "a" → "ab" → "abc" 在历史里只留最终的 "abc"，不留"递进半成品"
+      // 注意：不限时间窗口——同一个搜索 session 里的渐进输入都该合并；
+      // 跨 session 用户主动改成更长/更短的词，前缀关系成立时也算"修正"，合并是合理的。
+      if (
+        last &&
+        last !== trimmed &&
+        (trimmed.startsWith(last) || last.startsWith(trimmed))
+      ) {
+        return {
+          recentSearches: [trimmed, ...s.recentSearches.slice(1)].slice(
+            0,
+            RECENT_SEARCHES_MAX,
+          ),
+        };
+      }
       const deduped = s.recentSearches.filter((x) => x !== trimmed);
       return { recentSearches: [trimmed, ...deduped].slice(0, RECENT_SEARCHES_MAX) };
     });
@@ -260,6 +298,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorFontSize: EDITOR_FONT_DEFAULTS.size,
       editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
     }),
+  hiddenUnlockedAt: null,
+  markHiddenUnlocked: () => set({ hiddenUnlockedAt: Date.now() }),
+  clearHiddenUnlock: () => set({ hiddenUnlockedAt: null }),
+  isHiddenUnlocked: () => {
+    const ts = get().hiddenUnlockedAt;
+    return ts !== null && Date.now() - ts < HIDDEN_UNLOCK_TTL_MS;
+  },
   setAlwaysOnTop: async (enabled, opts) => {
     try {
       await getCurrentWindow().setAlwaysOnTop(enabled);

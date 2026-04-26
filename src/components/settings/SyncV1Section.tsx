@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { syncV1Api } from "@/lib/api";
+import { configApi, syncApi, syncV1Api } from "@/lib/api";
 import type {
   SyncBackend,
   SyncBackendInput,
@@ -224,6 +224,47 @@ export function SyncV1Section() {
     }
   }
 
+  /**
+   * 一键复用「备份与恢复」(V0) 里已配置的 WebDAV：
+   * URL/用户名走 app_config，密码走 SQLite 加密存储 → 解密后塞进表单
+   * 仅在新建时拉到当前的 V0 名字作为默认 name；编辑时不覆盖已有 name
+   */
+  async function handleReuseV0Webdav() {
+    try {
+      const url = await configApi.get("sync.webdav_url").catch(() => "");
+      const username = await configApi
+        .get("sync.webdav_username")
+        .catch(() => "");
+      if (!url || !username) {
+        message.warning(
+          "「备份与恢复」里还没填 WebDAV，请先去那边填好 URL 和用户名",
+        );
+        return;
+      }
+      let password = "";
+      try {
+        password = (await syncApi.getPassword(username)) ?? "";
+      } catch {
+        password = "";
+      }
+      setForm((s) => ({
+        ...s,
+        kind: "webdav",
+        name: s.name || `从备份与恢复复用（${username}）`,
+        url,
+        username,
+        password,
+      }));
+      if (!password) {
+        message.info("已填入 URL 和用户名；密码未保存到钥匙串，请手动补填");
+      } else {
+        message.success("已从「备份与恢复」复用 WebDAV 配置");
+      }
+    } catch (e) {
+      message.error(`读取失败：${e}`);
+    }
+  }
+
   function validateForm(): string | null {
     if (!form.name.trim()) return "请填写名称";
     switch (form.kind) {
@@ -346,7 +387,7 @@ export function SyncV1Section() {
           style={{ fontSize: 13, color: token.colorTextSecondary }}
         >
           <RefreshCcw size={14} />
-          已配置的远端：每个 backend 独立维护推送 / 拉取状态
+          已配置的同步源：每个同步源独立维护推送 / 拉取状态
         </span>
         <Button
           type="primary"
@@ -354,7 +395,7 @@ export function SyncV1Section() {
           icon={<Plus size={14} />}
           onClick={openCreateModal}
         >
-          新增 backend
+          新增同步源
         </Button>
       </div>
 
@@ -364,7 +405,7 @@ export function SyncV1Section() {
         loading={loading}
         dataSource={backends}
         pagination={false}
-        locale={{ emptyText: "还没有同步 backend，点右上角「新增」开始" }}
+        locale={{ emptyText: "还没有同步源，点右上角「新增同步源」开始" }}
         columns={[
           {
             title: "名称",
@@ -434,8 +475,8 @@ export function SyncV1Section() {
                     />
                   </Tooltip>
                   <Popconfirm
-                    title="确认删除此 backend?"
-                    description="只清掉同步配置和远端状态记录，不会动你的笔记"
+                    title="确认删除此同步源？"
+                    description="只清掉同步源配置和远端状态记录，不会动你的笔记"
                     onConfirm={() => handleDelete(b.id)}
                   >
                     <Button size="small" danger icon={<Trash2 size={13} />} />
@@ -467,7 +508,7 @@ export function SyncV1Section() {
       )}
 
       <Modal
-        title={form.id == null ? "新增同步 backend" : `编辑：${form.name}`}
+        title={form.id == null ? "新增同步源" : `编辑同步源：${form.name}`}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={handleSave}
@@ -475,6 +516,16 @@ export function SyncV1Section() {
         cancelText="取消"
         width={620}
         destroyOnClose
+        styles={{
+          body: {
+            // 表单字段较多（尤其 S3 类型）时，弹窗高度会撑爆视口顶到导航栏后面，
+            // 用户找不到底部「保存」按钮。固定 body 高度 + 内部滚动，让 Modal
+            // 自身保持稳定的可视高度。
+            height: 480,
+            overflowY: "auto",
+            paddingRight: 12,
+          },
+        }}
       >
         <Form layout="vertical" size="small">
           <Form.Item label="类型">
@@ -534,6 +585,15 @@ export function SyncV1Section() {
 
           {form.kind === "webdav" && (
             <>
+              <div className="mb-2">
+                <Button
+                  size="small"
+                  icon={<RefreshCcw size={13} />}
+                  onClick={handleReuseV0Webdav}
+                >
+                  复用「备份与恢复」的 WebDAV 配置
+                </Button>
+              </div>
               <Form.Item
                 label="WebDAV URL"
                 required

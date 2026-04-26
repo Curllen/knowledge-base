@@ -8,7 +8,7 @@
  * 顶部 Alert 用一段话讲清两者区别，避免用户困惑。两者数据存储互不冲突，
  * 同一个 WebDAV 目录可以共用（V0 上传 kb-sync-*.zip / V1 上传 manifest.json + notes/*.md）。
  */
-import { Alert, Card, Tabs, Typography, theme as antdTheme } from "antd";
+import { Card, Tabs, Typography, theme as antdTheme } from "antd";
 import { CloudCog, Archive } from "lucide-react";
 import { SyncSection } from "./SyncSection";
 import { SyncV1Section } from "./SyncV1Section";
@@ -29,31 +29,28 @@ export function SyncTabs() {
         </span>
       }
     >
-      <Alert
-        type="info"
-        showIcon
-        className="mb-3"
-        message="备份 vs 同步 — 是两个不同的能力，可以同时使用"
-        description={
-          <ul className="my-1 pl-5" style={{ fontSize: 12, lineHeight: 1.7 }}>
-            <li>
-              <Text strong>多端同步</Text>
-              ：实时增量，多台机器轮流改同一份笔记不会互相覆盖（last-write-wins + 冲突文件）。
-              适合<Text type="secondary">「办公电脑 ↔ 家用电脑」「电脑 + iCloud Drive 备份」</Text>等协作场景。
-            </li>
-            <li>
-              <Text strong>备份与恢复</Text>
-              ：把整个知识库（数据库 + 附件）打包成一个 ZIP 推到云端，是时间点快照。
-              适合<Text type="secondary">「误删找回」「重装系统迁移」「跨大版本回退」</Text>等灾备场景。
-            </li>
-            <li>
-              两者数据存储互不冲突——同一个 WebDAV 目录里 V0 写
-              <Text code>kb-sync-&lt;host&gt;.zip</Text>，V1 写
-              <Text code>manifest.json + notes/*.md</Text>，互不覆盖。
-            </li>
-          </ul>
-        }
-      />
+      <div className="mb-3" style={{ fontSize: 12, lineHeight: 1.7 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text strong style={{ fontSize: 12 }}>备份 vs 同步</Text> — 是两个不同的能力，可以同时使用。
+        </Text>
+        <ul className="my-1 pl-5" style={{ fontSize: 12, lineHeight: 1.7, color: "var(--ant-color-text-secondary)" }}>
+          <li>
+            <Text strong style={{ fontSize: 12 }}>多端同步</Text>
+            ：实时增量，多台机器轮流改同一份笔记不会互相覆盖（last-write-wins + 冲突文件）。
+            适合「办公电脑 ↔ 家用电脑」「电脑 + iCloud Drive 备份」等协作场景。
+          </li>
+          <li>
+            <Text strong style={{ fontSize: 12 }}>备份与恢复</Text>
+            ：把整个知识库（数据库 + 附件）打包成一个 ZIP 推到云端，是时间点快照。
+            适合「误删找回」「重装系统迁移」「跨大版本回退」等灾备场景。
+          </li>
+          <li>
+            两者数据存储互不冲突——同一个 WebDAV 目录里 V0 写
+            <Text code style={{ fontSize: 11 }}>kb-sync-&lt;host&gt;.zip</Text>，V1 写
+            <Text code style={{ fontSize: 11 }}>manifest.json + notes/*.md</Text>，互不覆盖。
+          </li>
+        </ul>
+      </div>
 
       <Tabs
         defaultActiveKey="v1"

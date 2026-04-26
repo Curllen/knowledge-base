@@ -141,18 +141,13 @@ export function DataDirSection() {
       }
       loading={loading}
     >
-      <Alert
-        type="info"
-        showIcon
-        className="mb-3"
-        message="把数据搬到自己选的目录（如 D 盘），避免占 C 盘 + 防重装系统丢数据"
-        description={
-          <span style={{ fontSize: 12 }}>
-            修改后**重启生效**；不自动迁移老数据，需手动复制 <Text code>app.db</Text> +{" "}
-            资产目录到新位置。
-          </span>
-        }
-      />
+      <div className="mb-3" style={{ fontSize: 12, lineHeight: 1.6 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          把数据搬到自己选的目录（如 D 盘），避免占 C 盘 + 防重装系统丢数据。
+          修改后<Text strong style={{ fontSize: 12 }}>重启生效</Text>；不自动迁移老数据，需手动复制{" "}
+          <Text code style={{ fontSize: 11 }}>app.db</Text> + 资产目录到新位置。
+        </Text>
+      </div>
 
       {info && (
         <div className="space-y-2">

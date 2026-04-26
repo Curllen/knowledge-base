@@ -45,6 +45,7 @@ import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
 import { SyncTabs } from "@/components/settings/SyncTabs";
 import { DataDirSection } from "@/components/settings/DataDirSection";
+import { HiddenPinSection } from "@/components/hidden/HiddenPinSection";
 import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
@@ -172,6 +173,75 @@ const MODEL_PRESETS: Record<string, { value: string; label: string }[]> = {
   ],
   custom: [],
 };
+
+/**
+ * 设置页左侧锚点导航。
+ *
+ * - 点击 → smooth scroll 到对应 section（用 id 锚定）
+ * - 当前激活项用 IntersectionObserver 检测：哪个 section 进入视口顶部 30% 区域，
+ *   就把对应导航项标灰底，实现"滚动同步高亮"
+ * - sticky top: 16，跟随主区滚动；不依赖 Antd Anchor，省一份组件依赖
+ */
+const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
+  { id: "settings-update", label: "软件更新" },
+  { id: "settings-startup", label: "启动设置" },
+  { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
+  { id: "settings-editor", label: "编辑器外观" },
+  { id: "settings-task-reminder", label: "待办提醒" },
+  { id: "settings-import", label: "导入笔记" },
+  { id: "settings-export", label: "导出 Markdown" },
+  { id: "settings-ai-models", label: "AI 模型" },
+  { id: "settings-templates", label: "模板管理" },
+  { id: "settings-data-dir", label: "数据目录" },
+  { id: "settings-sync", label: "同步备份" },
+  { id: "settings-orphan-images", label: "孤儿图片清理" },
+  { id: "settings-community", label: "作者 & 社区" },
+];
+
+function SettingsAnchorNav() {
+  const [activeId, setActiveId] = useState<string>(SETTINGS_NAV_ITEMS[0].id);
+
+  // 滚动监听：哪个 section 进入视口"顶部 1/3"区域 → 高亮对应导航项
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // 取所有当前可见 entries 里 boundingClientRect.top 最小（最靠近顶部）的一个
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          setActiveId(visible[0].target.id);
+        }
+      },
+      { rootMargin: "0px 0px -66% 0px", threshold: 0 },
+    );
+    SETTINGS_NAV_ITEMS.forEach((item) => {
+      const el = document.getElementById(item.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  function jumpTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  return (
+    <aside className="anchor-page-nav">
+      <ul>
+        {SETTINGS_NAV_ITEMS.map((item) => (
+          <li
+            key={item.id}
+            data-active={activeId === item.id || undefined}
+            onClick={() => jumpTo(item.id)}
+          >
+            {item.label}
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
 
 export default function SettingsPage() {
   const [checking, setChecking] = useState(false);
@@ -861,13 +931,15 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <Title level={3}>设置</Title>
-        <Text type="secondary">应用配置与 AI 模型管理</Text>
-      </div>
+    <div className="anchor-page-layout">
+      <SettingsAnchorNav />
+      <div className="anchor-page-content" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <Title level={3}>设置</Title>
+          <Text type="secondary">应用配置与 AI 模型管理</Text>
+        </div>
 
-      <Card title="软件更新">
+      <Card id="settings-update" title="软件更新">
         <Space wrap>
           <Button
             icon={<SyncOutlined spin={checking} />}
@@ -888,6 +960,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card
+        id="settings-startup"
         title={
           <span className="flex items-center gap-2">
             <Power size={16} />
@@ -927,7 +1000,12 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      <div id="settings-hidden-pin">
+        <HiddenPinSection />
+      </div>
+
       <Card
+        id="settings-editor"
         title={
           <span className="flex items-center gap-2">
             <Type size={16} />
@@ -1064,6 +1142,7 @@ export default function SettingsPage() {
 
       {/* 导入笔记（Markdown / PDF / Word） */}
       <Card
+        id="settings-import"
         title={
           <span className="flex items-center gap-2">
             <FolderInput size={16} />
@@ -1143,6 +1222,7 @@ export default function SettingsPage() {
 
       {/* 导出 Markdown */}
       <Card
+        id="settings-export"
         title={
           <span className="flex items-center gap-2">
             <FolderOutput size={16} />
@@ -1226,6 +1306,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card
+        id="settings-ai-models"
         title="AI 模型配置"
         extra={
           <Button
@@ -1250,6 +1331,7 @@ export default function SettingsPage() {
 
       {/* 模板管理 */}
       <Card
+        id="settings-templates"
         title={
           <span className="flex items-center gap-2">
             <LayoutTemplate size={16} />
@@ -1315,12 +1397,17 @@ export default function SettingsPage() {
         />
       </Card>
 
-      <DataDirSection />
+      <div id="settings-data-dir">
+        <DataDirSection />
+      </div>
 
-      <SyncTabs />
+      <div id="settings-sync">
+        <SyncTabs />
+      </div>
 
       {/* 维护：孤儿图片清理 */}
       <Card
+        id="settings-orphan-images"
         title={
           <Space>
             <Trash2 size={16} />
@@ -1471,7 +1558,7 @@ export default function SettingsPage() {
         </div>
       </Modal>
 
-      <Card title="作者 & 社区">
+      <Card id="settings-community" title="作者 & 社区">
         <div className="flex items-center justify-between py-1">
           <div style={{ minWidth: 0, flex: 1 }}>
             <div>
@@ -1620,7 +1707,11 @@ export default function SettingsPage() {
         />
       </Modal>
 
-      {/* 添加/编辑模型弹窗 */}
+      {/* 添加/编辑模型弹窗
+       *
+       * 表单字段较多（name / provider / url / key / model_id / max_context + 各种 extra 提示），
+       * 全展开会顶到屏幕外。固定 body 最大高度 + 内部滚动 → 在小屏（笔记本 13"）也能看全。
+       * extra 字号统一缩小 (12px) 进一步压缩纵向占用，见 Modal styles.body 内的 .ant-form-item-extra。 */}
       <Modal
         title={editingModel ? "编辑 AI 模型" : "添加 AI 模型"}
         open={modelModalOpen}
@@ -1629,11 +1720,19 @@ export default function SettingsPage() {
         okText="保存"
         cancelText="取消"
         destroyOnClose
+        // 类名配合 global.css 里的 .ai-model-modal .ant-form-item-extra → 提示文字 12px
+        className="ai-model-modal"
+        styles={{
+          body: {
+            // 固定 body 最大高度 + 内部滚动，避免表单顶到屏幕外（小屏 13" 笔记本也能看全）
+            maxHeight: "calc(100vh - 220px)",
+            overflowY: "auto",
+          },
+        }}
       >
         <Form
           form={form}
           layout="vertical"
-          className="mt-4"
           initialValues={{ provider: "ollama", api_url: DEFAULT_URLS.ollama }}
         >
           <Form.Item
@@ -1693,16 +1792,28 @@ export default function SettingsPage() {
           <Form.Item
             name="max_context"
             label="最大上下文 token"
-            extra="不知道填多少？保留默认 32000；DeepSeek/GPT-4o/智谱填 128000；Claude 填 200000；GLM-Long/MiniMax-M1 填 1000000。AI 页挂载笔记时按这个值动态算每篇的截断阈值。"
+            extra="从下拉选常用量级，或手动输入任意数字。不确定就保留 32000。"
             initialValue={32000}
           >
-            <Input
-              type="number"
-              min={1000}
-              max={2000000}
-              step={1000}
+            <AutoComplete
               placeholder="32000"
-              addonAfter="tokens"
+              options={[
+                { value: 32000, label: "32K  （OpenAI 老款 / 默认）" },
+                { value: 64000, label: "64K" },
+                { value: 128000, label: "128K （DeepSeek / GPT-4o / 智谱）" },
+                { value: 200000, label: "200K （Claude）" },
+                { value: 1000000, label: "1M   （GLM-Long / MiniMax-M1）" },
+                { value: 2000000, label: "2M" },
+              ]}
+              filterOption={(input, option) => {
+                const q = input.trim().toLowerCase();
+                if (!q) return true;
+                return (
+                  String(option?.value ?? "").includes(q) ||
+                  String(option?.label ?? "").toLowerCase().includes(q)
+                );
+              }}
+              style={{ width: "100%" }}
             />
           </Form.Item>
         </Form>
@@ -1751,6 +1862,7 @@ export default function SettingsPage() {
         onClose={() => setUpdateModalOpen(false)}
         update={update}
       />
+      </div>
     </div>
   );
 }

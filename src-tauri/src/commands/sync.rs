@@ -206,6 +206,17 @@ pub fn sync_has_webdav_password(
         .map_err(|e| e.to_string())
 }
 
+/// 取出已加密存储的 WebDAV 密码明文。
+/// 仅供"新增/编辑同步源 → 一键复用备份与恢复配置"流程使用：
+/// V1 backend 把密码塞在 backend.config_json 里，需要明文以构造 JSON。
+#[tauri::command]
+pub fn sync_get_webdav_password(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<Option<String>, String> {
+    SyncService::get_webdav_password(&state.db, &username).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn sync_delete_webdav_password(
     state: State<'_, AppState>,

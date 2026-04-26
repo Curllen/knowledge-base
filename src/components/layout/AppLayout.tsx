@@ -91,8 +91,18 @@ export function AppLayout() {
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
 
-  // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠
-  const panelShown = sidePanelVisible && viewHasPanel(activeView);
+  const location = useLocation();
+  // 当前路由是否为"全页路由"（不属于任何 ActivityBar 视图，且本身有自己的左侧导航）。
+  // 这类路由下 SidePanel 必须强制隐藏——否则用户从笔记跳过来仍会看到笔记面板（bug）
+  const isStandalonePage =
+    location.pathname === "/settings" ||
+    location.pathname.startsWith("/settings/") ||
+    location.pathname === "/about" ||
+    location.pathname.startsWith("/about/");
+
+  // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠 + 不在 standalone 路由
+  const panelShown =
+    !isStandalonePage && sidePanelVisible && viewHasPanel(activeView);
   const siderWidth = ACTIVITY_BAR_WIDTH + (panelShown ? sidePanelWidth : 0);
 
   // SidePanel 容器 DOM 引用：拖拽时直接改样式，避免 React 每 mousemove 重渲染
@@ -155,7 +165,6 @@ export function AppLayout() {
     [sidePanelWidth, setSidePanelWidth],
   );
   const navigate = useNavigate();
-  const location = useLocation();
 
   // URL → activeView 单向同步：任意来源的 navigate（ActivityBar / 命令面板 /
   // 快捷键 / 笔记列表跳转等）都会更新 store.activeView，保证 SidePanel 正确分发
