@@ -1,4 +1,4 @@
-import { Extension, ReactRenderer } from "@tiptap/react";
+import { Extension, InputRule, ReactRenderer } from "@tiptap/react";
 import Suggestion from "@tiptap/suggestion";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 import { linkApi } from "@/lib/api";
@@ -10,6 +10,24 @@ import {
 
 export const WikiLinkSuggestion = Extension.create({
   name: "wikiLinkSuggestion",
+
+  // 中文全角双方括号 `【【` 自动改写为 `[[`，复用同一条 Suggestion 触发链。
+  // Why: 数据层只保留一种 wikilink 表达 `[[Title]]`，反链/搜索/导出零改动；
+  //      用户输完第二个 `【` 即时替换，再继续敲文字就走 [[ 触发管线。
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /【【$/,
+        handler: ({ state, range }) => {
+          state.tr.replaceWith(
+            range.from,
+            range.to,
+            state.schema.text("[["),
+          );
+        },
+      }),
+    ];
+  },
 
   addProseMirrorPlugins() {
     return [
