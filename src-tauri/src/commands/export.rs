@@ -1,7 +1,11 @@
+use std::path::PathBuf;
+
 use tauri::AppHandle;
 
 use crate::models::{ExportResult, SingleExportResult};
 use crate::services;
+use crate::services::export_html::HtmlExportResult;
+use crate::services::export_word::WordExportResult;
 use crate::state::AppState;
 
 /// 批量导出笔记为 Markdown 文件
@@ -43,6 +47,58 @@ pub fn export_single_note(
         &state.data_dir,
         id,
         &parent_dir,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// T-020 导出单条笔记为 Word（.docx）
+///
+/// `target_path` 是用户在 save dialog 选定的最终 .docx 路径
+#[tauri::command]
+pub fn export_single_note_to_word(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    target_path: String,
+) -> Result<WordExportResult, String> {
+    let note = state
+        .db
+        .get_note(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("笔记 {} 不存在", id))?;
+
+    let assets_root = state.data_dir.clone();
+    let target = PathBuf::from(&target_path);
+
+    services::export_word::WordExportService::export_single(
+        &note.title,
+        &note.content,
+        &target,
+        &assets_root,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64，可独立分享）
+#[tauri::command]
+pub fn export_single_note_to_html(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    target_path: String,
+) -> Result<HtmlExportResult, String> {
+    let note = state
+        .db
+        .get_note(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("笔记 {} 不存在", id))?;
+
+    let assets_root = state.data_dir.clone();
+    let target = PathBuf::from(&target_path);
+
+    services::export_html::HtmlExportService::export_single(
+        &note.title,
+        &note.content,
+        &target,
+        &assets_root,
     )
     .map_err(|e| e.to_string())
 }

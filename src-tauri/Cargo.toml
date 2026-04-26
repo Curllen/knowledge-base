@@ -65,6 +65,8 @@ tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 # Excel / ODS 解析（纯 Rust，零系统依赖；AI 智能规划"Excel 导入"模式用）
 calamine = "0.28"
+# T-020 笔记导出为 Word：纯 Rust 生成 .docx；零系统依赖
+docx-rs = "0.4"
 
 # ─── 编译优化 ────────────────────────────────────
 
