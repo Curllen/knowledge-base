@@ -386,7 +386,8 @@ function MetaBar({
                   </div>
             }
             showSearch
-            // 注意：searchValue 非受控，交给 antd 内部管；我们只监听 onSearch
+            // searchValue 受控，便于在创建标签后清空输入框
+            searchValue={tagSearch}
             onSearch={setTagSearch}
             filterOption={(input, option) =>
               String(option?.label ?? "")

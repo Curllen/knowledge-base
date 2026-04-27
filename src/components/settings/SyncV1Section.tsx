@@ -432,12 +432,21 @@ export function SyncV1Section() {
           {
             title: "名称",
             dataIndex: "name",
+            // 不要在同一行 flex 里同时塞 Tag + 长名字：名字遇到窄列宽会被 flex 压
+            // 到 1 字符宽，中文/邮箱可逐字换行后整段竖排成一字一行（实际反馈过的 bug）。
+            // 改为上下两行：Tag 在上，名字独占整列自然换行。
             render: (_, b) => (
-              <span className="flex items-center gap-2">
-                <Tag color={KIND_TAG_COLOR[b.kind]}>{KIND_LABEL[b.kind]}</Tag>
-                <Text strong>{b.name}</Text>
-                {!b.enabled && <Tag>已禁用</Tag>}
-              </span>
+              <div className="flex flex-col gap-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Tag color={KIND_TAG_COLOR[b.kind]} style={{ marginInlineEnd: 0 }}>
+                    {KIND_LABEL[b.kind]}
+                  </Tag>
+                  {!b.enabled && <Tag style={{ marginInlineEnd: 0 }}>已禁用</Tag>}
+                </div>
+                <Text strong style={{ wordBreak: "break-word" }}>
+                  {b.name}
+                </Text>
+              </div>
             ),
           },
           {
