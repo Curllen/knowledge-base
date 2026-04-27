@@ -22,14 +22,16 @@ import {
   FolderOpen,
   FolderInput,
   Folder as FolderIcon,
+  FileText,
   ChevronsDownUp,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOutlined } from "@ant-design/icons";
+import { FolderFilled } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
 import { folderApi, importApi, noteApi } from "@/lib/api";
-import type { Folder, ScannedFile } from "@/types";
+import type { Folder, Note, ScannedFile } from "@/types";
+import { parseEmojiPrefix } from "@/lib/treeIcons";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
 import { ImportPreviewModal } from "@/components/ImportPreviewModal";
@@ -47,6 +49,22 @@ import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 /** 临时"新建子文件夹"节点的 key 前缀 */
 const NEW_NODE_PREFIX = "__new_under_";
 
+/** 笔记叶节点 key 前缀（与文件夹 id 区分） */
+const NOTE_KEY_PREFIX = "note:";
+
+/** 单个文件夹直属笔记的展示上限（超过引导用户去主区） */
+const NOTES_PER_FOLDER_LIMIT = 100;
+
+function isNoteKey(key: string): boolean {
+  return key.startsWith(NOTE_KEY_PREFIX);
+}
+function noteIdFromKey(key: string): number {
+  return Number(key.slice(NOTE_KEY_PREFIX.length));
+}
+function noteKey(id: number): string {
+  return `${NOTE_KEY_PREFIX}${id}`;
+}
+
 /** 收集所有文件夹 id 字符串（用于 defaultExpandAll 场景） */
 function collectAllKeys(folders: Folder[]): string[] {
   const keys: string[] = [];
@@ -60,18 +78,40 @@ function collectAllKeys(folders: Folder[]): string[] {
   return keys;
 }
 
-/** 将 Folder[] 转为 antd Tree 的 DataNode[]（可插入临时新建节点） */
+/** Tree DataNode 扩展：携带 isNote 标志和原始数据，便于 renderTitle 区分 */
+type TreeNoteData = { isNote: true; note: Note };
+type TreeFolderData = { isNote: false };
+type TreeNodeData = TreeNoteData | TreeFolderData;
+type EnrichedNode = DataNode & { data?: TreeNodeData };
+
+/** 将 Folder[] + 各文件夹直属笔记 转为 antd Tree 的 DataNode[]
+ *
+ * 子节点顺序：先所有子文件夹（保持原有顺序），后所有直属笔记（按 updated_at 倒序，
+ * 由后端排序）。单个文件夹笔记数 > NOTES_PER_FOLDER_LIMIT 时只展示前 N 条。
+ */
 function foldersToTreeData(
   folders: Folder[],
   creatingUnderKey: string | null,
-): DataNode[] {
+  notesByFolder: Map<number, Note[]>,
+): EnrichedNode[] {
   return folders.map((f) => {
-    const children: DataNode[] = f.children.length
-      ? foldersToTreeData(f.children, creatingUnderKey)
+    const subFolders: EnrichedNode[] = f.children.length
+      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder)
       : [];
 
+    const noteLeaves: EnrichedNode[] = (notesByFolder.get(f.id) ?? [])
+      .slice(0, NOTES_PER_FOLDER_LIMIT)
+      .map((n) => ({
+        key: noteKey(n.id),
+        title: n.title || "未命名",
+        isLeaf: true,
+        data: { isNote: true, note: n },
+      }));
+
+    const children: EnrichedNode[] = [...subFolders, ...noteLeaves];
+
     if (creatingUnderKey === String(f.id)) {
-      children.push({
+      children.unshift({
         key: `${NEW_NODE_PREFIX}${f.id}`,
         title: "",
         isLeaf: true,
@@ -82,6 +122,7 @@ function foldersToTreeData(
       key: String(f.id),
       title: f.name,
       children: children.length ? children : undefined,
+      data: { isNote: false },
     };
   });
 }
@@ -141,7 +182,39 @@ export function NotesPanel() {
     location.pathname === "/notes" &&
     new URLSearchParams(location.search).get("folder") === "uncategorized";
   const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
+  const notesRefreshTick = useAppStore((s) => s.notesRefreshTick);
   const { token } = antdTheme.useToken();
+
+  // 文件夹直属笔记缓存（按 folderId 索引）。
+  // 展开时按需加载；notesRefreshTick 变化时清空已加载的项触发重拉。
+  const [notesByFolder, setNotesByFolder] = useState<Map<number, Note[]>>(
+    () => new Map(),
+  );
+  // 正在请求的 folderId 集合，避免同一个文件夹并发请求
+  const loadingNotesRef = useRef<Set<number>>(new Set());
+
+  /** 拉某个文件夹的直属笔记（include_descendants=false） */
+  async function loadNotesForFolder(folderId: number) {
+    if (loadingNotesRef.current.has(folderId)) return;
+    loadingNotesRef.current.add(folderId);
+    try {
+      const r = await noteApi.list({
+        folder_id: folderId,
+        include_descendants: false,
+        page: 1,
+        page_size: NOTES_PER_FOLDER_LIMIT,
+      });
+      setNotesByFolder((prev) => {
+        const next = new Map(prev);
+        next.set(folderId, r.items);
+        return next;
+      });
+    } catch (e) {
+      console.warn(`[notes-panel] 加载文件夹 ${folderId} 笔记失败:`, e);
+    } finally {
+      loadingNotesRef.current.delete(folderId);
+    }
+  }
 
   // 用 store 里的预热缓存做种子，避免首次打开 Panel 时空白闪烁；
   // useEffect 仍会后台 loadFolders 拿最新数据替换。
@@ -226,6 +299,51 @@ export function NotesPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folders]);
+
+  // notes 数据变化时（新建/编辑/删除）：清空缓存 + 重拉所有已展开的文件夹。
+  // 避免遗留旧标题。expand 阶段没拉过的文件夹不需要预热。
+  useEffect(() => {
+    const expandedFolderIds: number[] = [];
+    for (const k of expandedKeys) {
+      const s = String(k);
+      if (!s.startsWith(NEW_NODE_PREFIX) && !isNoteKey(s)) {
+        const id = Number(s);
+        if (Number.isFinite(id)) expandedFolderIds.push(id);
+      }
+    }
+    setNotesByFolder(new Map());
+    expandedFolderIds.forEach((id) => void loadNotesForFolder(id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesRefreshTick]);
+
+  /** 展开/收起：每次有"新展开"的文件夹就触发一次按需加载 */
+  function handleExpand(keys: React.Key[]) {
+    const prevSet = new Set(expandedKeys.map(String));
+    setExpandedKeys(keys);
+    for (const k of keys) {
+      const s = String(k);
+      if (prevSet.has(s)) continue;
+      if (s.startsWith(NEW_NODE_PREFIX) || isNoteKey(s)) continue;
+      const id = Number(s);
+      if (Number.isFinite(id) && !notesByFolder.has(id)) {
+        void loadNotesForFolder(id);
+      }
+    }
+  }
+
+  // 初次拿到文件夹后，对默认展开的文件夹批量预热笔记，避免一打开就要点一下才显示
+  useEffect(() => {
+    if (folders.length === 0 || expandedKeys.length === 0) return;
+    for (const k of expandedKeys) {
+      const s = String(k);
+      if (s.startsWith(NEW_NODE_PREFIX) || isNoteKey(s)) continue;
+      const id = Number(s);
+      if (Number.isFinite(id) && !notesByFolder.has(id)) {
+        void loadNotesForFolder(id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folders, expandedKeys]);
 
   async function loadFolders() {
     try {
@@ -339,6 +457,44 @@ export function NotesPanel() {
     if (!editingKey) return;
     const key = editingKey;
     const name = editingName.trim();
+
+    // 笔记重命名：复用 update_note Command（带原 content / folder_id 一起更新）
+    if (isNoteKey(key)) {
+      const id = noteIdFromKey(key);
+      const note = findNoteById(id);
+      if (!note) {
+        setEditingKey(null);
+        setEditingName("");
+        return;
+      }
+      if (!name || name === note.title) {
+        setEditingKey(null);
+        setEditingName("");
+        return;
+      }
+      // 加密笔记的 content 是占位符，直接 update_note 会把真实加密内容覆盖掉。
+      // 引导用户在编辑器里改标题（那里能拿到解密后内容）。
+      if (note.is_encrypted) {
+        message.info("加密笔记请在编辑器内修改标题");
+        setEditingKey(null);
+        setEditingName("");
+        return;
+      }
+      try {
+        await noteApi.update(id, {
+          title: name,
+          content: note.content,
+          folder_id: note.folder_id,
+        });
+        setEditingKey(null);
+        setEditingName("");
+        useAppStore.getState().bumpNotesRefresh();
+      } catch (e) {
+        message.error(String(e));
+      }
+      return;
+    }
+
     const original = findFolderName(folders, Number(key));
     if (!name || name === original) {
       setEditingKey(null);
@@ -396,6 +552,41 @@ export function NotesPanel() {
     const dropKey = String(info.node.key);
     if (dragKey.startsWith(NEW_NODE_PREFIX) || dropKey.startsWith(NEW_NODE_PREFIX)) return;
 
+    // ── 笔记拖动 → 移动到目标文件夹 ──
+    if (isNoteKey(dragKey)) {
+      const noteId = noteIdFromKey(dragKey);
+      const note = findNoteById(noteId);
+      if (!note) return;
+
+      // 计算目标 folderId：
+      //   - 落在文件夹节点上（!dropToGap） → 目标 = 该文件夹
+      //   - 落在文件夹之间的 gap → 目标 = 该文件夹的父
+      //   - 落在另一篇笔记上/旁 → 目标 = 那篇笔记所在的文件夹
+      let targetFolderId: number | null;
+      if (isNoteKey(dropKey)) {
+        const dropNote = findNoteById(noteIdFromKey(dropKey));
+        targetFolderId = dropNote ? dropNote.folder_id : note.folder_id;
+      } else {
+        const dropFolderId = Number(dropKey);
+        if (!Number.isFinite(dropFolderId)) return;
+        targetFolderId = info.dropToGap
+          ? findFolderParentId(folders, dropFolderId)
+          : dropFolderId;
+      }
+
+      if (targetFolderId === note.folder_id) return; // 同目录无操作
+      try {
+        await noteApi.moveToFolder(noteId, targetFolderId);
+        useAppStore.getState().bumpNotesRefresh();
+      } catch (e) {
+        message.error(String(e));
+      }
+      return;
+    }
+
+    // 拖动文件夹时：目标若是笔记，忽略
+    if (isNoteKey(dropKey)) return;
+
     const dragId = Number(dragKey);
     const dropId = Number(dropKey);
     const currentParentId = findFolderParentId(folders, dragId);
@@ -440,9 +631,37 @@ export function NotesPanel() {
 
   // ─── 单击/双击 ─────────────────────────────
 
+  /** 在 notesByFolder 缓存里按 id 查找笔记（跨所有已加载文件夹） */
+  function findNoteById(id: number): Note | null {
+    for (const list of notesByFolder.values()) {
+      const found = list.find((n) => n.id === id);
+      if (found) return found;
+    }
+    return null;
+  }
+
   function handleTitleClick(key: string) {
     if (key.startsWith(NEW_NODE_PREFIX)) return;
     if (editingKey === key) return;
+
+    // 笔记叶节点：单击打开编辑器；300ms 内同节点二次点击 → 进入重命名
+    if (isNoteKey(key)) {
+      const now = Date.now();
+      const last = lastClickRef.current;
+      if (last && last.key === key && now - last.time < 300) {
+        lastClickRef.current = null;
+        const note = findNoteById(noteIdFromKey(key));
+        if (note) startRename(key, note.title || "");
+        return;
+      }
+      lastClickRef.current = { key, time: now };
+      const id = noteIdFromKey(key);
+      if (Number.isFinite(id)) {
+        setSelectedKey(key);
+        navigate(`/notes/${id}`);
+      }
+      return;
+    }
 
     const now = Date.now();
     const last = lastClickRef.current;
@@ -772,6 +991,35 @@ export function NotesPanel() {
     }
 
     const name = String(node.title ?? "");
+    const { emoji, rest } = parseEmojiPrefix(name);
+    const display = rest || name;
+
+    if (isNoteKey(key)) {
+      return (
+        <span
+          className="flex items-center gap-1.5 w-full min-w-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleTitleClick(key);
+          }}
+          title={name}
+        >
+          {emoji ? (
+            <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
+              {emoji}
+            </span>
+          ) : (
+            <FileText
+              size={13}
+              style={{ flexShrink: 0, color: token.colorTextTertiary }}
+            />
+          )}
+          <span className="truncate">{display}</span>
+        </span>
+      );
+    }
+
+    // 文件夹：emoji 优先；否则用 hash 配色的填充文件夹图标
     return (
       <span
         className="flex items-center gap-1.5 w-full"
@@ -779,14 +1027,21 @@ export function NotesPanel() {
           e.stopPropagation();
           handleTitleClick(key);
         }}
+        title={name}
       >
-        <FolderOutlined style={{ flexShrink: 0 }} />
-        <span className="truncate">{name}</span>
+        {emoji ? (
+          <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
+            {emoji}
+          </span>
+        ) : (
+          <FolderFilled style={{ flexShrink: 0, color: token.colorPrimary }} />
+        )}
+        <span className="truncate">{display}</span>
       </span>
     );
   }
 
-  const treeData = foldersToTreeData(folders, creatingUnderKey);
+  const treeData = foldersToTreeData(folders, creatingUnderKey, notesByFolder);
 
   return (
     <div
@@ -959,13 +1214,22 @@ export function NotesPanel() {
                 onDrop={handleDrop}
                 selectedKeys={selectedKey ? [selectedKey] : []}
                 expandedKeys={expandedKeys}
-                onExpand={(keys) => setExpandedKeys(keys)}
+                onExpand={handleExpand}
                 titleRender={renderTitle}
+                switcherIcon={({ expanded }) =>
+                  expanded ? (
+                    <ChevronDown size={11} strokeWidth={2.2} />
+                  ) : (
+                    <ChevronRight size={11} strokeWidth={2.2} />
+                  )
+                }
                 onRightClick={({ event, node }) => {
                   event.preventDefault();
                   event.stopPropagation();
                   const key = String(node.key);
                   if (key.startsWith(NEW_NODE_PREFIX)) return;
+                  // 笔记叶节点暂不提供右键菜单（v1）
+                  if (isNoteKey(key)) return;
                   const name = findFolderName(folders, Number(key));
                   if (name === null) return;
                   setContextMenu({

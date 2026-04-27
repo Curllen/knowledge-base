@@ -359,7 +359,7 @@ export default function HomePage() {
         size="small"
         styles={{ body: { padding: "12px 14px" } }}
       >
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 gap-3">
           <span className="flex items-center gap-2 text-sm font-medium">
             <PencilLine size={14} style={{ color: token.colorPrimary }} />
             快速记一笔
@@ -367,9 +367,27 @@ export default function HomePage() {
               追加到「今日笔记」
             </Text>
           </span>
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            Ctrl/⌘ + ↩ 保存
-          </Text>
+          <div className="flex items-center gap-2 shrink-0">
+            {quickNote.trim() && (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {quickNote.trim().length} 字
+              </Text>
+            )}
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              Ctrl/⌘ + ↩
+            </Text>
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<Check size={13} />}
+              loading={quickNoteSaving}
+              disabled={!quickNote.trim()}
+              onClick={handleQuickSaveNote}
+            >
+              保存
+            </Button>
+          </div>
         </div>
         <Input.TextArea
           rows={2}
@@ -385,24 +403,6 @@ export default function HomePage() {
           style={{ borderRadius: 6, fontSize: 13 }}
           autoSize={{ minRows: 2, maxRows: 5 }}
         />
-        <div className="flex items-center justify-end mt-2 gap-2">
-          {quickNote.trim() && (
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {quickNote.trim().length} 字
-            </Text>
-          )}
-          <Button
-            size="small"
-            type="primary"
-            ghost
-            icon={<Check size={13} />}
-            loading={quickNoteSaving}
-            disabled={!quickNote.trim()}
-            onClick={handleQuickSaveNote}
-          >
-            保存
-          </Button>
-        </div>
       </Card>
 
       {/* ④ 双列:今日待办速览(左) + 最近笔记(右) */}
@@ -412,7 +412,7 @@ export default function HomePage() {
         <Card
           size="small"
           className="col-span-7"
-          styles={{ body: { padding: "12px 14px" } }}
+          styles={{ body: { padding: "8px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <CheckSquare size={14} style={{ color: token.colorSuccess }} />
@@ -460,7 +460,11 @@ export default function HomePage() {
                       : token.colorTextTertiary;
                 const desc = task.description?.trim();
                 return (
-                  <li key={task.id} className="flex items-start gap-2.5">
+                  <li
+                    key={task.id}
+                    className="flex items-start gap-2.5"
+                    style={{ minHeight: 38 }}
+                  >
                     <input
                       type="checkbox"
                       onChange={() => handleToggleTask(task.id)}
@@ -534,7 +538,7 @@ export default function HomePage() {
         <Card
           size="small"
           className="col-span-5"
-          styles={{ body: { padding: "12px 14px" } }}
+          styles={{ body: { padding: "8px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <NotebookText size={14} style={{ color: token.colorPrimary }} />
