@@ -175,7 +175,7 @@ export function TabBar() {
         open={confirmTab !== null}
         title={confirmTab ? `「${confirmTab.title || "未命名"}」尚未保存` : ""}
         onCancel={() => !closing && setConfirmTab(null)}
-        maskClosable={!closing}
+        mask={{ closable: !closing }}
         closable={!closing}
         footer={[
           <Button key="discard" danger disabled={closing} onClick={handleDiscardAndClose}>

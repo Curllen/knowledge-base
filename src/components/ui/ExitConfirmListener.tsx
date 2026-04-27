@@ -82,7 +82,7 @@ export function ExitConfirmListener() {
       open={open}
       title={`有 ${dirtyTabs.length} 条笔记尚未保存`}
       onCancel={handleCancel}
-      maskClosable={!exiting}
+      mask={{ closable: !exiting }}
       closable={!exiting}
       footer={[
         <Button key="discard" danger disabled={exiting} onClick={handleDiscardAndExit}>

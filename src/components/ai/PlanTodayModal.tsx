@@ -200,7 +200,7 @@ export function PlanTodayModal({ open, onClose, onSaved }: PlanTodayModalProps) 
       onCancel={handleClose}
       width={720}
       centered
-      destroyOnClose
+      destroyOnHidden
       footer={
         phase === "review" ? (
           <div className="flex items-center justify-between w-full">

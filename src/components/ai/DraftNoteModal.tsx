@@ -145,7 +145,7 @@ export function DraftNoteModal({ open, onClose, onSaved }: DraftNoteModalProps) 
       onCancel={handleClose}
       width={phase === "review" ? 960 : 640}
       centered
-      destroyOnClose
+      destroyOnHidden
       footer={null}
       styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
     >

@@ -813,7 +813,7 @@ export function CreateTaskModal({
                   const note = noteOptions.find((n) => n.id === v);
                   if (note) handleNoteSelect(note);
                 }}
-                dropdownRender={(menu) => (
+                popupRender={(menu) => (
                   <div>
                     {!noteQuery.trim() && (
                       <div

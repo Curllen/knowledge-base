@@ -281,7 +281,7 @@ export function PlanFromGoalModal({ open, onClose, onSaved }: Props) {
       onCancel={handleClose}
       width={780}
       centered
-      destroyOnClose
+      destroyOnHidden
       footer={
         phase === "review" ? (
           <div className="flex items-center justify-between w-full">

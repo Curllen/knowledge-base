@@ -351,7 +351,7 @@ export default function PromptsPage() {
         cancelText="取消"
         width={640}
         centered
-        // 注：不要用 destroyOnClose。openEdit() 是先 setFieldsValue 再 setModalOpen(true),
+        // 注：不要用 destroyOnHidden。openEdit() 是先 setFieldsValue 再 setModalOpen(true),
         // 若 Modal 关闭态 Form 被销毁，这一瞬间 setFieldsValue 会丢失全部赋值,导致编辑
         // 内置模板时所有字段都是空白。保留 Form 实例后，赋值可稳定生效。
         styles={{

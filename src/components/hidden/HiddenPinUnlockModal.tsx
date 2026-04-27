@@ -80,8 +80,8 @@ export function HiddenPinUnlockModal({ open, onSuccess, onCancel }: Props) {
       confirmLoading={submitting}
       onOk={handleSubmit}
       onCancel={onCancel}
-      destroyOnClose
-      maskClosable={false}
+      destroyOnHidden
+      mask={{ closable: false }}
       width={420}
     >
       <div className="flex flex-col gap-3">

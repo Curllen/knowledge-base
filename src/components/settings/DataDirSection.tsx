@@ -245,7 +245,7 @@ export function DataDirSection() {
         }
         cancelText="取消"
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         {pickedPath && info && (
           <div className="text-sm leading-6">

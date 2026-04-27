@@ -212,10 +212,12 @@ export function NoteAiDrawer({
       placement="right"
       open={open}
       onClose={onClose}
-      width={440}
       mask={false}
       destroyOnHidden={false}
       styles={{
+        // 自定义宽度走 wrapper 槽位（antd 5 已弃用顶层 width prop，且 size 只
+        // 有 default/large 两档预设，无法表达 440px）
+        wrapper: { width: 440 },
         body: {
           padding: 0,
           display: "flex",

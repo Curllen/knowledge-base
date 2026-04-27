@@ -158,7 +158,7 @@ export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPalett
         wrapper: { borderRadius: 12, overflow: "hidden" },
       }}
       centered
-      destroyOnClose
+      destroyOnHidden
     >
       <div
         style={{

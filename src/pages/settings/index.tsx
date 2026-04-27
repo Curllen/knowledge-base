@@ -1689,7 +1689,7 @@ export default function SettingsPage() {
         onCancel={() => setModelModalOpen(false)}
         okText="保存"
         cancelText="取消"
-        destroyOnClose
+        destroyOnHidden
         // 类名配合 global.css 里的 .ai-model-modal .ant-form-item-extra → 提示文字 12px
         className="ai-model-modal"
         styles={{
@@ -1797,7 +1797,7 @@ export default function SettingsPage() {
         onCancel={() => setTplModalOpen(false)}
         okText="保存"
         cancelText="取消"
-        destroyOnClose
+        destroyOnHidden
         width={820}
         styles={{ body: { maxHeight: "calc(100vh - 240px)", overflow: "auto" } }}
       >

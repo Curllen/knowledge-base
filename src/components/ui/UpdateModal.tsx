@@ -128,7 +128,7 @@ export function UpdateModal({ open, onClose, update }: UpdateModalProps) {
       open={open}
       onCancel={handleClose}
       closable={status !== "downloading"}
-      maskClosable={status !== "downloading"}
+      mask={{ closable: status !== "downloading" }}
       footer={
         status === "found" ? (
           <Space>

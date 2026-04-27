@@ -546,7 +546,7 @@ export function SyncV1Section() {
         okText="保存"
         cancelText="取消"
         width={620}
-        destroyOnClose
+        destroyOnHidden
         styles={{
           body: {
             // 表单字段较多（尤其 S3 类型）时，弹窗高度会撑爆视口顶到导航栏后面，

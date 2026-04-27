@@ -79,7 +79,7 @@ export function CloseRequestedListener() {
       open={open}
       title="关闭窗口"
       onCancel={handleCancel}
-      maskClosable={false}
+      mask={{ closable: false }}
       footer={
         <Space>
           <Button onClick={handleMinimize}>最小化到托盘</Button>

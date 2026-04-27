@@ -249,7 +249,7 @@ export default function TrashPage() {
           }}
         >
           <span style={{ fontSize: 13 }}>已选 {selectedIds.length} 条</span>
-          <Divider type="vertical" />
+          <Divider orientation="vertical" />
           <Popconfirm
             title={`确认恢复 ${selectedIds.length} 条笔记？`}
             okText="恢复"

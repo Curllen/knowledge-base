@@ -118,8 +118,8 @@ export function VaultModal({ open, mode, onClose, onSuccess }: VaultModalProps) 
       confirmLoading={busy}
       okText={mode === "setup" ? "设置并解锁" : "解锁"}
       cancelText="取消"
-      destroyOnClose
-      maskClosable={!busy}
+      destroyOnHidden
+      mask={{ closable: !busy }}
       centered
       width={520}
     >

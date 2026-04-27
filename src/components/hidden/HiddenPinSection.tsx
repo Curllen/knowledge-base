@@ -177,8 +177,8 @@ function SetPinModal({ isChange, onClose, onDone }: SetPinModalProps) {
       confirmLoading={submitting}
       onOk={handleOk}
       onCancel={onClose}
-      destroyOnClose
-      maskClosable={false}
+      destroyOnHidden
+      mask={{ closable: false }}
     >
       <Form form={form} layout="vertical" preserve={false}>
         {isChange && (
@@ -276,8 +276,8 @@ function ClearPinModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
       confirmLoading={submitting}
       onOk={handleOk}
       onCancel={onClose}
-      destroyOnClose
-      maskClosable={false}
+      destroyOnHidden
+      mask={{ closable: false }}
     >
       <Alert
         type="warning"

@@ -281,7 +281,7 @@ function CodeBlockNodeView({
           options={languageOptions}
           showSearch
           variant="borderless"
-          dropdownStyle={{ minWidth: 200 }}
+          styles={{ popup: { root: { minWidth: 200 } } }}
           disabled={!isEditable}
         />
         {autoDetected && (

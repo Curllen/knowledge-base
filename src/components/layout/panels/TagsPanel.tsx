@@ -217,7 +217,7 @@ export function TagsPanel() {
           form.resetFields();
         }}
         onOk={() => form.submit()}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           <Form.Item

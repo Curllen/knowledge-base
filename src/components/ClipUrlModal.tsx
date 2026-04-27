@@ -73,7 +73,7 @@ export function ClipUrlModal({ open, folderId, onClose }: Props) {
       okText={loading ? "抓取中…" : "剪藏"}
       cancelText="取消"
       confirmLoading={loading}
-      destroyOnClose
+      destroyOnHidden
       width={520}
     >
       <div className="flex flex-col gap-3">
