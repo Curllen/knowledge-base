@@ -1,37 +1,40 @@
 /**
- * Tiptap Video 节点
+ * Tiptap Video 节点（带稳定 ID + 自定义 NodeView，支持时间戳跳转）
  *
  * 设计要点：
- * - 块级节点，渲染原生 `<video controls preload="metadata">`，借 WebView 自带解码器播放
- * - `preload="metadata"` 只下载首帧元数据，**不会**预加载完整视频，所以打开
- *   含多个视频的笔记不会卡（视频从磁盘流式喂给 WebView）
- * - markdown 序列化为 HTML 标签 `<video src="..." controls></video>`，
- *   依赖 tiptap-markdown 的 `html: true` 选项保留 HTML 节点
- * - parseHTML 同时接住单 src 和 `<video><source src=""></video>` 两种写法，
- *   让外部 .md 里的 HTML 视频引用能被识别成节点
+ * - 块级 atom 节点，渲染原生 `<video controls preload="metadata">`
+ * - 加 attrs.id：8 位短 ID，给 VideoTimestamp 节点引用稳定锚点用
+ *   （src 路径不能当 ID：同一视频多次插入会撞，路径变更会失联）
+ * - 加 attrs.label：用户可改的视频显示名（默认空 → NodeView 显示「视频 N」自动编号）
+ * - NodeView：顶部条带「视频名 / 改名 / 📍 加时间戳」按钮 + 原生 video 元素
+ * - 序列化为 `<video src="..." controls data-video-id data-video-label>`，
+ *   依赖 tiptap-markdown `html: true` 透传；老 video 节点解析时 id 缺失
+ *   → onCreate 钩子里 backfill（见 TiptapEditor.tsx）
  */
 import { Node, mergeAttributes } from "@tiptap/core";
+import { ReactNodeViewRenderer } from "@tiptap/react";
+import { VideoNodeView } from "./VideoNodeView";
 
 export interface VideoOptions {
-  /** 透传给 <video> 元素的额外 HTML 属性 */
   HTMLAttributes: Record<string, unknown>;
 }
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     video: {
-      /** 在光标处插入视频节点 */
       setVideo: (options: { src: string; poster?: string }) => ReturnType;
     };
   }
 }
 
+/** 8 位短 ID（base36），冲突概率 ~1/2.8e12，对单笔记内的视频数量足够 */
+export function generateVideoId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 export const Video = Node.create<VideoOptions>({
   name: "video",
-
   group: "block",
-
-  // draggable + selectable 让节点可被拖动 / 点选删除
   draggable: true,
   selectable: true,
   atom: true,
@@ -51,7 +54,6 @@ export const Video = Node.create<VideoOptions>({
       src: {
         default: null,
         parseHTML: (el) => {
-          // 优先取 <video src="...">，其次取首个 <source src="..."> 子元素
           const direct = (el as HTMLElement).getAttribute("src");
           if (direct) return direct;
           const source = (el as HTMLElement).querySelector("source");
@@ -68,7 +70,24 @@ export const Video = Node.create<VideoOptions>({
       controls: {
         default: true,
         parseHTML: (el) => (el as HTMLElement).hasAttribute("controls"),
-        renderHTML: (attrs) => (attrs.controls === false ? {} : { controls: "true" }),
+        renderHTML: (attrs) =>
+          attrs.controls === false ? {} : { controls: "true" },
+      },
+      /** 稳定 ID，给时间戳锚点用。新插入时由调用方生成；老节点 onCreate 时 backfill */
+      id: {
+        default: null,
+        parseHTML: (el) => (el as HTMLElement).getAttribute("data-video-id"),
+        renderHTML: (attrs) =>
+          attrs.id ? { "data-video-id": attrs.id as string } : {},
+      },
+      /** 用户自定义的视频显示名（如「教程」「剪辑1」） */
+      label: {
+        default: null,
+        parseHTML: (el) => (el as HTMLElement).getAttribute("data-video-label"),
+        renderHTML: (attrs) =>
+          attrs.label
+            ? { "data-video-label": attrs.label as string }
+            : {},
       },
     };
   },
@@ -77,7 +96,6 @@ export const Video = Node.create<VideoOptions>({
     return [
       {
         tag: "video",
-        // 让外部 .md 里 `<video><source src="x.mp4"></video>` 也能被识别
         getAttrs: (el) => {
           const node = el as HTMLElement;
           const src =
@@ -98,6 +116,10 @@ export const Video = Node.create<VideoOptions>({
     ];
   },
 
+  addNodeView() {
+    return ReactNodeViewRenderer(VideoNodeView);
+  },
+
   addCommands() {
     return {
       setVideo:
@@ -105,7 +127,12 @@ export const Video = Node.create<VideoOptions>({
         ({ commands }) =>
           commands.insertContent({
             type: this.name,
-            attrs: { src: options.src, poster: options.poster ?? null },
+            attrs: {
+              src: options.src,
+              poster: options.poster ?? null,
+              id: generateVideoId(),
+              label: null,
+            },
           }),
     };
   },

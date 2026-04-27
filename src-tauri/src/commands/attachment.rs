@@ -26,6 +26,22 @@ pub fn save_note_attachment(
         .map_err(|e| e.to_string())
 }
 
+/// 从本地文件路径零拷贝保存附件（用于工具栏"插入附件"按钮）
+#[tauri::command]
+pub fn save_note_attachment_from_path(
+    app: tauri::AppHandle,
+    note_id: i64,
+    source_path: String,
+) -> Result<AttachmentInfo, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    AttachmentService::save_from_path(&data_dir, note_id, &source_path)
+        .map_err(|e| e.to_string())
+}
+
 /// 删除笔记的所有附件
 #[tauri::command]
 pub fn delete_note_attachments(app: tauri::AppHandle, note_id: i64) -> Result<(), String> {

@@ -81,6 +81,80 @@ impl AttachmentService {
         Self::save_bytes(app_data_dir, note_id, file_name, &data)
     }
 
+    /// 从本地文件路径零拷贝保存（用于工具栏"插入附件"或大文件场景）
+    ///
+    /// 与 `save_from_base64` 相比：走 `std::fs::copy` 不经过 IPC，
+    /// 避免大文件 base64 编解码导致的内存峰值 + IPC 卡顿。
+    pub fn save_from_path(
+        app_data_dir: &Path,
+        note_id: i64,
+        source_path: &str,
+    ) -> Result<AttachmentInfo, AppError> {
+        let source = Path::new(source_path);
+        if !source.exists() {
+            return Err(AppError::NotFound(format!("文件不存在: {}", source_path)));
+        }
+
+        let file_name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment.bin");
+
+        let ext = Path::new(file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // 安全黑名单：与 save_from_base64 同等校验
+        if BLOCKED_EXTS.contains(&ext.as_str()) {
+            return Err(AppError::Custom(format!(
+                "出于安全考虑，禁止保存 .{} 文件为附件",
+                ext
+            )));
+        }
+
+        let note_dir = Self::attachments_dir(app_data_dir).join(note_id.to_string());
+        std::fs::create_dir_all(&note_dir)?;
+
+        let stem = Path::new(file_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("attachment");
+        let ext_for_name = if ext.is_empty() { "bin" } else { ext.as_str() };
+
+        let now = chrono::Local::now();
+        let seq = ATTACHMENT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let sanitized_stem = sanitize_stem(stem);
+        let unique_name = format!(
+            "{}__{}_{:09}_{:06}.{}",
+            sanitized_stem,
+            now.format("%Y%m%d%H%M%S"),
+            now.timestamp_subsec_nanos(),
+            seq,
+            ext_for_name
+        );
+
+        let file_path = note_dir.join(&unique_name);
+        std::fs::copy(source, &file_path)?;
+
+        let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let mime = mime_for_ext(&ext).to_string();
+
+        log::info!(
+            "附件已复制: {} → {} ({} bytes)",
+            source.display(),
+            file_path.display(),
+            size
+        );
+        Ok(AttachmentInfo {
+            path: file_path.to_string_lossy().into_owned(),
+            file_name: file_name.to_string(),
+            size,
+            mime,
+        })
+    }
+
     /// 保存字节数据到文件
     fn save_bytes(
         app_data_dir: &Path,

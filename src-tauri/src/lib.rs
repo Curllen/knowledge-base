@@ -756,6 +756,7 @@ pub fn run() {
             commands::videos::get_videos_dir,
             // 附件模块（PDF/Office/ZIP/音视频等通用文件）
             commands::attachment::save_note_attachment,
+            commands::attachment::save_note_attachment_from_path,
             commands::attachment::delete_note_attachments,
             commands::attachment::get_attachments_dir,
             // 模板模块

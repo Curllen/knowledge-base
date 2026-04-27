@@ -486,9 +486,12 @@ export const exportApi = {
 
 /** 附件 API（PDF/Office/ZIP/音视频等非图片非文本文件） */
 export const attachmentApi = {
-  /** 保存附件（base64 数据）；返回含绝对路径的 AttachmentInfo */
+  /** 保存附件（base64 数据，给前端拖放/粘贴用） */
   save: (noteId: number, fileName: string, base64Data: string) =>
     invoke<AttachmentInfo>("save_note_attachment", { noteId, fileName, base64Data }),
+  /** 从本地路径零拷贝保存（工具栏"插入附件"用，避免大文件 base64 OOM） */
+  saveFromPath: (noteId: number, sourcePath: string) =>
+    invoke<AttachmentInfo>("save_note_attachment_from_path", { noteId, sourcePath }),
   /** 删除笔记的所有附件 */
   deleteNoteAttachments: (noteId: number) =>
     invoke<void>("delete_note_attachments", { noteId }),
