@@ -1,10 +1,27 @@
 import { useState, useRef } from "react";
 import { Modal, Button, Progress, Typography, Space } from "antd";
-import { CheckCircleOutlined, SyncOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, SyncOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const { Text, Paragraph } = Typography;
+
+/**
+ * 自动更新失败时的"手动下载"备选地址。
+ * 顺序与 tauri.conf.json 的 updater.endpoints 一致：R2 → Gitee → GitHub。
+ * R2 是裸文件存储没有 release 页，所以只暴露 Gitee / GitHub 两个 release 页。
+ */
+const FALLBACK_DOWNLOAD_PAGES = [
+  {
+    label: "Gitee Releases（国内推荐）",
+    url: "https://gitee.com/bkywksj/knowledge-base-release/releases",
+  },
+  {
+    label: "GitHub Releases（海外）",
+    url: "https://github.com/bkywksj/knowledge-base-release/releases",
+  },
+];
 
 type UpdateStatus = "found" | "downloading" | "downloaded";
 
@@ -48,7 +65,40 @@ export function UpdateModal({ open, onClose, update }: UpdateModalProps) {
 
       setStatus("downloaded");
     } catch (e) {
-      Modal.error({ title: "更新失败", content: String(e) });
+      // 自动更新走的是 update.json 里写死的 URL，updater 不会自动切端点。
+      // 下载失败 90% 是用户本地网络问题（防火墙/断网/CDN 卡），列出 Gitee /
+      // GitHub release 页让用户挑一个能访问的手动下载，比"光显示错误"友好得多。
+      Modal.error({
+        title: "更新下载失败",
+        icon: <ExclamationCircleOutlined />,
+        width: 480,
+        content: (
+          <div>
+            <Paragraph style={{ marginBottom: 12 }}>
+              <Text>自动下载失败，建议从下方任一镜像页手动下载安装：</Text>
+            </Paragraph>
+            <Space direction="vertical" style={{ width: "100%" }}>
+              {FALLBACK_DOWNLOAD_PAGES.map((page) => (
+                <Button
+                  key={page.url}
+                  block
+                  onClick={() => void openUrl(page.url)}
+                  style={{ textAlign: "left" }}
+                >
+                  {page.label}
+                </Button>
+              ))}
+            </Space>
+            <Paragraph
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+            >
+              错误详情：{String(e)}
+            </Paragraph>
+          </div>
+        ),
+        okText: "知道了",
+      });
       setStatus("found");
     }
   }
