@@ -6,6 +6,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
+import Code from "@tiptap/extension-code";
 import { CodeBlockEnhanced } from "./CodeBlockEnhanced";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import Typography from "@tiptap/extension-typography";
@@ -181,6 +182,8 @@ import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
 import { Video as VideoNode } from "./VideoNode";
 import { VideoTimestamp } from "./VideoTimestamp";
 import { AllowFileLink } from "./AllowFileLink";
+import { Callout } from "./Callout";
+import { Toggle, ToggleSummary, ToggleContent } from "./Toggle";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
@@ -858,6 +861,17 @@ export function TiptapEditor({
         // 手动 Link.configure / Underline 重复（控制台会打印 Duplicate extension names）
         link: false,
         underline: false,
+        // 行内 code 默认 excludes:"_" 会排斥所有其他 mark（包括 textStyle/fontSize），
+        // 导致选中行内代码后改字号失败。这里禁用 starter-kit 自带的 code，
+        // 下方手动引入 Code 并清空 excludes，让 fontSize/color/highlight 等可与
+        // code mark 同时存在
+        code: false,
+      }),
+      Code.configure({
+        HTMLAttributes: {},
+      }).extend({
+        // 清空 excludes 让 textStyle / highlight / link 等其他 mark 可与 code 共存
+        excludes: "",
       }),
       Placeholder.configure({ placeholder }),
       Highlight.configure({ multicolor: true }),
@@ -907,9 +921,9 @@ export function TiptapEditor({
       Underline,
       Superscript,
       Subscript,
-      // FontSize 已基于 TextStyle 扩展，无需再单独引入 TextStyle
+      // FontSize 直接继承 TextStyle，复用 textStyle mark name；Color 扩展默认就用这个
       FontSize,
-      Color.configure({ types: ["textStyle", "textStyleFontSize"] }),
+      Color,
       LineHeight,
       Indent,
       CodeBlockEnhanced.configure({ lowlight }),
@@ -933,6 +947,10 @@ export function TiptapEditor({
       }),
       VideoNode,
       VideoTimestamp,
+      Callout,
+      Toggle,
+      ToggleSummary,
+      ToggleContent,
       WikiLinkDecoration.configure({
         onClick: (title: string) => wikiClickRef.current?.(title),
       }),

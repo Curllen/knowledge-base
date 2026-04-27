@@ -11,7 +11,7 @@
  *   （Notion/语雀 导出 md 也不保字号，业界一致）
  */
 import { Extension } from "@tiptap/core";
-import TextStyle from "@tiptap/extension-text-style";
+import { TextStyle } from "@tiptap/extension-text-style";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -30,30 +30,39 @@ declare module "@tiptap/core" {
   }
 }
 
-/** 字号 mark 扩展（必须配 TextStyle 一起用） */
+/**
+ * 字号 mark 扩展。
+ *
+ * 不另起新 mark name —— 直接继承 TextStyle 加 fontSize attr，复用 textStyle 这个
+ * mark 名。这样 @tiptap/extension-color 默认配的 types: ["textStyle"] 仍然有效，
+ * 一个 mark 同时承载 color + fontSize 两个 attr，schema 干净。
+ */
 export const FontSize = TextStyle.extend({
-  name: "textStyleFontSize",
   addAttributes() {
     return {
       ...this.parent?.(),
       fontSize: {
         default: null,
-        parseHTML: (el) => (el as HTMLElement).style.fontSize?.replace(/['"]+/g, "") || null,
-        renderHTML: (attrs) =>
+        parseHTML: (el: HTMLElement) =>
+          el.style.fontSize?.replace(/['"]+/g, "") || null,
+        renderHTML: (attrs: { fontSize?: string | null }) =>
           attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
       },
     };
   },
   addCommands() {
     return {
-      setFontSize:
-        (size: string) =>
-        ({ chain }) =>
-          chain().setMark("textStyle", { fontSize: size }).run(),
-      unsetFontSize:
-        () =>
-        ({ chain }) =>
-          chain().setMark("textStyle", { fontSize: null }).removeEmptyTextStyle().run(),
+      // 必须 spread 父 commands，否则会丢失父 TextStyle 的 removeEmptyTextStyle
+      ...(this.parent?.() ?? {}),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setFontSize: (size: string) => ({ chain }: { chain: () => any }) =>
+        chain().setMark("textStyle", { fontSize: size }).run(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      unsetFontSize: () => ({ chain }: { chain: () => any }) => {
+        // 不依赖 removeEmptyTextStyle —— 单独清 fontSize attr 后让父扩展的
+        // appendTransaction 自然清理空 mark；这样不论父 commands 是否齐全都安全。
+        return chain().setMark("textStyle", { fontSize: null }).run();
+      },
     };
   },
 });
@@ -87,8 +96,10 @@ export const LineHeight = Extension.create({
       setLineHeight:
         (lh: string) =>
         ({ commands }) => {
+          // every 会要求所有 types 都返回 true，但当前 selection 只在某一种类型上
+          // → 必有一种返回 false → 命令整体失败。改用 some：任一成功即视为成功。
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return (this.options.types as string[]).every((t) =>
+          return (this.options.types as string[]).some((t) =>
             (commands as any).updateAttributes(t, { lineHeight: lh }),
           );
         },
@@ -96,8 +107,8 @@ export const LineHeight = Extension.create({
         () =>
         ({ commands }) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return (this.options.types as string[]).every((t) =>
-            (commands as any).resetAttributes(t, "lineHeight"),
+          return (this.options.types as string[]).some((t) =>
+            (commands as any).updateAttributes(t, { lineHeight: null }),
           );
         },
     };

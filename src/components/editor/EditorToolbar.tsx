@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
-import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select } from "antd";
+import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select, ColorPicker } from "antd";
 import type { MenuProps } from "antd";
 import {
   Bold,
@@ -9,9 +9,15 @@ import {
   Strikethrough,
   Highlighter,
   Code,
-  Heading1,
-  Heading2,
-  Heading3,
+  Superscript as SuperscriptIcon,
+  Subscript as SubscriptIcon,
+  IndentIncrease,
+  IndentDecrease,
+  Eraser,
+  Baseline,
+  PaintBucket,
+  Lightbulb,
+  ChevronsUpDown,
   List,
   ListOrdered,
   ListTodo,
@@ -21,7 +27,6 @@ import {
   Undo2,
   Redo2,
   Link as LinkIcon,
-  Unlink,
   ImagePlus,
   Film,
   Paperclip,
@@ -30,7 +35,6 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  AlignJustify,
   Rows3,
   Columns3,
   Trash2,
@@ -40,6 +44,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { attachmentApi, imageApi, videoApi } from "@/lib/api";
 import { insertVideoTimestamp } from "./VideoTimestamp";
+import { EditorStats } from "./EditorStats";
+import { EmojiPicker } from "./EmojiPicker";
 
 interface ToolbarProps {
   editor: Editor;
@@ -56,6 +62,8 @@ interface ToolItem {
   isActive?: () => boolean;
   /** T-017: 提供后按钮渲染为 Dropdown trigger，菜单展示 dropdownItems */
   dropdownItems?: MenuProps["items"];
+  /** 完全自定义渲染（颜色选择 / Select 下拉等非 Button 控件用），提供则跳过默认 Button 渲染 */
+  customRender?: () => React.ReactNode;
 }
 
 export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
@@ -291,25 +299,41 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         action: () => editor.chain().focus().redo().run(),
       },
     ],
-    // 标题
+    // 标题（H1–H6 + 正文）下拉
     [
       {
-        icon: <Heading1 size={15} />,
-        title: "标题 1",
-        action: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
-        isActive: () => editor.isActive("heading", { level: 1 }),
-      },
-      {
-        icon: <Heading2 size={15} />,
-        title: "标题 2",
-        action: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
-        isActive: () => editor.isActive("heading", { level: 2 }),
-      },
-      {
-        icon: <Heading3 size={15} />,
-        title: "标题 3",
-        action: () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
-        isActive: () => editor.isActive("heading", { level: 3 }),
+        icon: null,
+        title: "段落格式",
+        customRender: () => (
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomLeft"
+            menu={{
+              items: [
+                { key: "p",  label: <span>正文</span> },
+                { key: "h1", label: <span style={{ fontSize: 18, fontWeight: 700 }}>H1 一级标题</span> },
+                { key: "h2", label: <span style={{ fontSize: 16, fontWeight: 700 }}>H2 二级标题</span> },
+                { key: "h3", label: <span style={{ fontSize: 15, fontWeight: 600 }}>H3 三级标题</span> },
+                { key: "h4", label: <span style={{ fontSize: 14, fontWeight: 600 }}>H4 四级标题</span> },
+                { key: "h5", label: <span style={{ fontSize: 13 }}>H5 五级标题</span> },
+                { key: "h6", label: <span style={{ fontSize: 13 }}>H6 六级标题</span> },
+              ],
+              onClick: ({ key }) => applyBlockType(editor, key as BlockType),
+              selectedKeys: [getCurrentBlockType(editor)],
+            }}
+          >
+            <Button
+              type="text"
+              size="small"
+              style={{ minWidth: 72, height: 28, padding: "0 6px" }}
+            >
+              <span className="inline-flex items-center gap-1">
+                {labelOfBlockType(getCurrentBlockType(editor))}
+                <ChevronDown size={12} style={{ opacity: 0.6 }} />
+              </span>
+            </Button>
+          </Dropdown>
+        ),
       },
     ],
     // 文本格式
@@ -350,6 +374,159 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         action: () => editor.chain().focus().toggleCode().run(),
         isActive: () => editor.isActive("code"),
       },
+      {
+        icon: <SuperscriptIcon size={15} />,
+        title: "上标",
+        action: () => editor.chain().focus().toggleSuperscript().run(),
+        isActive: () => editor.isActive("superscript"),
+      },
+      {
+        icon: <SubscriptIcon size={15} />,
+        title: "下标",
+        action: () => editor.chain().focus().toggleSubscript().run(),
+        isActive: () => editor.isActive("subscript"),
+      },
+    ],
+    // 颜色 / 字号 / 行高
+    [
+      {
+        icon: null,
+        title: "字体颜色",
+        customRender: () => (
+          <Tooltip title="字体颜色" mouseEnterDelay={0.5}>
+            <ColorPicker
+              size="small"
+              value={(editor.getAttributes("textStyle").color as string) || "#000000"}
+              onChange={(c) => {
+                const hex = c.toHexString();
+                editor.chain().focus().setColor(hex).run();
+              }}
+              presets={[
+                {
+                  label: "常用",
+                  colors: [
+                    "#000000", "#595959", "#8c8c8c", "#bfbfbf", "#ffffff",
+                    "#ff4d4f", "#fa8c16", "#fadb14", "#52c41a", "#1677ff",
+                    "#722ed1", "#eb2f96",
+                  ],
+                },
+              ]}
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<Baseline size={15} />}
+                style={{ minWidth: 28, height: 28, padding: 0 }}
+              />
+            </ColorPicker>
+          </Tooltip>
+        ),
+      },
+      {
+        icon: null,
+        title: "背景颜色",
+        customRender: () => (
+          <Tooltip title="背景颜色" mouseEnterDelay={0.5}>
+            <ColorPicker
+              size="small"
+              value={(editor.getAttributes("highlight").color as string) || "#ffe58f"}
+              onChange={(c) => {
+                const hex = c.toHexString();
+                editor.chain().focus().toggleHighlight({ color: hex }).run();
+              }}
+              presets={[
+                {
+                  label: "常用",
+                  colors: [
+                    "#ffe58f", "#ffadd2", "#b7eb8f", "#91d5ff", "#ffd6e7",
+                    "#fff1b8", "#d9f7be", "#bae7ff", "#f0f5ff", "#fff7e6",
+                  ],
+                },
+              ]}
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<PaintBucket size={15} />}
+                style={{ minWidth: 28, height: 28, padding: 0 }}
+              />
+            </ColorPicker>
+          </Tooltip>
+        ),
+      },
+      {
+        icon: null,
+        title: "字号",
+        customRender: () => {
+          const cur = (editor.getAttributes("textStyle").fontSize as string) || "";
+          return (
+            <Dropdown
+              trigger={["click"]}
+              placement="bottomLeft"
+              menu={{
+                items: [
+                  { key: "__clear__", label: "默认字号" },
+                  { type: "divider" } as const,
+                  ...FONT_SIZE_OPTIONS.map((o) => ({ key: o.value, label: o.label })),
+                ],
+                selectedKeys: cur ? [cur] : ["__clear__"],
+                onClick: ({ key }) => {
+                  if (key === "__clear__") {
+                    editor.chain().focus().unsetFontSize().run();
+                  } else {
+                    editor.chain().focus().setFontSize(key).run();
+                  }
+                },
+              }}
+            >
+              <Button type="text" size="small" style={{ minWidth: 56, height: 28, padding: "0 6px" }}>
+                <span className="inline-flex items-center gap-1">
+                  {cur ? cur.replace("px", "") : "字号"}
+                  <ChevronDown size={12} style={{ opacity: 0.6 }} />
+                </span>
+              </Button>
+            </Dropdown>
+          );
+        },
+      },
+      {
+        icon: null,
+        title: "行间距",
+        customRender: () => {
+          const cur =
+            (editor.getAttributes("paragraph").lineHeight as string) ||
+            (editor.getAttributes("heading").lineHeight as string) ||
+            "";
+          return (
+            <Dropdown
+              trigger={["click"]}
+              placement="bottomLeft"
+              menu={{
+                items: [
+                  { key: "__clear__", label: "默认行高" },
+                  { type: "divider" } as const,
+                  ...LINE_HEIGHT_OPTIONS.map((o) => ({ key: o.value, label: o.label })),
+                ],
+                selectedKeys: cur ? [cur] : ["__clear__"],
+                onClick: ({ key }) => {
+                  if (key === "__clear__") {
+                    editor.chain().focus().unsetLineHeight().run();
+                  } else {
+                    editor.chain().focus().setLineHeight(key).run();
+                  }
+                },
+              }}
+            >
+              <Button type="text" size="small" style={{ minWidth: 56, height: 28, padding: "0 6px" }}>
+                <span className="inline-flex items-center gap-1">
+                  {cur ? cur : "行高"}
+                  <ChevronDown size={12} style={{ opacity: 0.6 }} />
+                </span>
+              </Button>
+            </Dropdown>
+          );
+        },
+      },
     ],
     // 列表 & 引用
     [
@@ -376,6 +553,48 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         title: "引用",
         action: () => editor.chain().focus().toggleBlockquote().run(),
         isActive: () => editor.isActive("blockquote"),
+      },
+      {
+        icon: (
+          <span className="inline-flex items-center gap-0.5">
+            <Lightbulb size={15} />
+            <ChevronDown size={11} style={{ opacity: 0.6 }} />
+          </span>
+        ),
+        title: "Callout 提示框",
+        isActive: () => editor.isActive("callout"),
+        dropdownItems: [
+          {
+            key: "callout-info",
+            label: <span><span style={{ marginRight: 6 }}>ℹ️</span>信息</span>,
+            onClick: () => editor.chain().focus().toggleCallout("info").run(),
+          },
+          {
+            key: "callout-tip",
+            label: <span><span style={{ marginRight: 6 }}>💡</span>提示</span>,
+            onClick: () => editor.chain().focus().toggleCallout("tip").run(),
+          },
+          {
+            key: "callout-warning",
+            label: <span><span style={{ marginRight: 6 }}>⚠️</span>警告</span>,
+            onClick: () => editor.chain().focus().toggleCallout("warning").run(),
+          },
+          {
+            key: "callout-danger",
+            label: <span><span style={{ marginRight: 6 }}>❌</span>危险</span>,
+            onClick: () => editor.chain().focus().toggleCallout("danger").run(),
+          },
+        ],
+      },
+      {
+        icon: <ChevronsUpDown size={15} />,
+        title: "折叠块",
+        action: () => editor.chain().focus().setToggle().run(),
+      },
+      {
+        icon: null,
+        title: "插入 Emoji",
+        customRender: () => <EmojiPicker editor={editor} />,
       },
       {
         icon: (
@@ -435,12 +654,6 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         title: "右对齐",
         action: () => editor.chain().focus().setTextAlign("right").run(),
         isActive: () => editor.isActive({ textAlign: "right" }),
-      },
-      {
-        icon: <AlignJustify size={15} />,
-        title: "两端对齐",
-        action: () => editor.chain().focus().setTextAlign("justify").run(),
-        isActive: () => editor.isActive({ textAlign: "justify" }),
       },
     ],
     // 表格 — T-017 全部命令折叠到 Dropdown 菜单，避免工具栏过挤
@@ -536,14 +749,9 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
     [
       {
         icon: <LinkIcon size={15} />,
-        title: "插入链接",
+        title: "插入链接（在选中链接上点击 → 弹窗留空确定可移除）",
         action: openLinkModal,
         isActive: () => editor.isActive("link"),
-      },
-      {
-        icon: <Unlink size={15} />,
-        title: "移除链接",
-        action: () => editor.chain().focus().unsetLink().run(),
       },
       {
         icon: <ImagePlus size={15} />,
@@ -571,17 +779,63 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         action: () => editor.chain().focus().setHorizontalRule().run(),
       },
     ],
+    // 缩进 + 清除格式
+    [
+      {
+        icon: <IndentDecrease size={15} />,
+        title: "减少缩进",
+        action: () => editor.chain().focus().outdent().run(),
+      },
+      {
+        icon: <IndentIncrease size={15} />,
+        title: "增加缩进",
+        action: () => editor.chain().focus().indent().run(),
+      },
+      {
+        icon: <Eraser size={15} />,
+        title: "清除格式",
+        action: () =>
+          editor.chain().focus().unsetAllMarks().clearNodes().run(),
+      },
+    ],
   ];
+
+  /**
+   * 阻止 toolbar 内 mousedown 默认 focus 切换。
+   * Why: 用户在编辑器选中文本后点 toolbar 按钮 / Select / ColorPicker 时，
+   *      浏览器原生行为会把 focus 移到目标元素 → ProseMirror selection
+   *      虽然数据上还在，但浏览器不再渲染选区蓝色高亮（视觉上"失焦"）。
+   *      preventDefault mousedown 能阻止 focus 切换，但不影响 click 事件，
+   *      antd Select/ColorPicker 仍能正常打开 popup。Modal/portal 弹层位于
+   *      document.body 末尾，事件不会冒泡到这里，互不影响。
+   */
+  function handleToolbarMouseDown(e: React.MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
+    // antd Select / ColorPicker 依赖 mousedown 默认行为打开 popup，跳过这些
+    // （它们自己内部 focus 处理；onChange 时我们再 chain().focus() 恢复 editor）
+    if (t.closest(".ant-select, .ant-color-picker, .ant-select-selector, .ant-popover")) {
+      return;
+    }
+    e.preventDefault();
+  }
 
   return (
     <>
-      <div className="tiptap-toolbar">
+      <div className="tiptap-toolbar" onMouseDown={handleToolbarMouseDown}>
         {groups.map((group, gi) => (
           <span key={gi} className="inline-flex items-center">
             {gi > 0 && (
-              <Divider type="vertical" style={{ height: 20, margin: "0 2px" }} />
+              <Divider type="vertical" style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }} />
             )}
             {group.map((item, ii) => {
+              if (item.customRender) {
+                return (
+                  <span key={ii} className="inline-flex items-center">
+                    {item.customRender()}
+                  </span>
+                );
+              }
               const btn = (
                 <Button
                   type="text"
@@ -590,8 +844,9 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
                   onClick={item.dropdownItems ? undefined : item.action}
                   className={item.isActive?.() ? "toolbar-btn-active" : ""}
                   style={{
-                    minWidth: 28,
-                    height: 28,
+                    // 带 dropdownItems 双图标按钮宽 40，普通单图标 26 紧凑
+                    minWidth: item.dropdownItems ? 40 : 26,
+                    height: 26,
                     padding: item.dropdownItems ? "0 4px" : 0,
                   }}
                 />
@@ -621,6 +876,9 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             })}
           </span>
         ))}
+        {/* 右侧字数统计：占位 spacer 推到最右 + Popover hover 详细 */}
+        <span style={{ flex: 1, minWidth: 8 }} />
+        <EditorStats editor={editor} />
       </div>
 
       <Modal
@@ -693,6 +951,62 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
     </>
   );
 }
+
+// ─── 段落格式下拉 helpers ─────────────────────────
+
+type BlockType = "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+
+function getCurrentBlockType(editor: Editor): BlockType {
+  for (let lv = 1; lv <= 6; lv++) {
+    if (editor.isActive("heading", { level: lv })) {
+      return `h${lv}` as BlockType;
+    }
+  }
+  return "p";
+}
+
+function labelOfBlockType(t: BlockType): string {
+  if (t === "p") return "正文";
+  return t.toUpperCase();
+}
+
+function applyBlockType(editor: Editor, type: BlockType): void {
+  if (type === "p") {
+    editor.chain().focus().setParagraph().run();
+    return;
+  }
+  const lv = parseInt(type.slice(1), 10);
+  if (lv >= 1 && lv <= 6) {
+    editor
+      .chain()
+      .focus()
+      .setHeading({ level: lv as 1 | 2 | 3 | 4 | 5 | 6 })
+      .run();
+  }
+}
+
+const FONT_SIZE_OPTIONS = [
+  { value: "12px", label: "12" },
+  { value: "13px", label: "13" },
+  { value: "14px", label: "14" },
+  { value: "15px", label: "15" },
+  { value: "16px", label: "16" },
+  { value: "18px", label: "18" },
+  { value: "20px", label: "20" },
+  { value: "24px", label: "24" },
+  { value: "30px", label: "30" },
+  { value: "36px", label: "36" },
+  { value: "48px", label: "48" },
+];
+
+const LINE_HEIGHT_OPTIONS = [
+  { value: "1", label: "1.0" },
+  { value: "1.15", label: "1.15" },
+  { value: "1.4", label: "1.4" },
+  { value: "1.6", label: "1.6" },
+  { value: "1.8", label: "1.8" },
+  { value: "2", label: "2.0" },
+];
 
 /** 解析 mm:ss 或 hh:mm:ss 文本为秒数；非法返回 null */
 function parseTimeToSeconds(text: string): number | null {
