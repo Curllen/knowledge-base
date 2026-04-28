@@ -27,6 +27,27 @@ function loadMermaid(): Promise<MermaidApi> {
   return mermaidPromise;
 }
 
+/**
+ * 规范化 mermaid 源码——只清理"肉眼不可见"的捣乱字符，不碰用户可能故意写的
+ * 中文标点（中文括号/引号/冒号常用于 label，不能动）。
+ *
+ * 触发场景：从微信/网页/Word 复制 mermaid 代码，或不同电脑的输入法状态差异，
+ * 会带入 BOM / 零宽空格 / NBSP / 全角空格，导致 mermaid v11 报 Syntax error in text。
+ */
+function sanitizeMermaidSource(code: string): string {
+  return code
+    // BOM（U+FEFF）：通常出现在开头，但任何位置都清掉
+    .replace(/\uFEFF/g, "")
+    // 零宽字符：U+200B(ZWSP) / U+200C(ZWNJ) / U+200D(ZWJ) / U+2060(WJ)
+    .replace(/[\u200B-\u200D\u2060]/g, "")
+    // 不间断空格 NBSP（U+00A0）→ 普通空格
+    .replace(/\u00A0/g, " ")
+    // 全角空格 / 表意空格（U+3000）→ 普通空格
+    .replace(/\u3000/g, " ")
+    // 行尾 CR（CRLF → LF），mermaid 解析器对 \r 偶发敏感
+    .replace(/\r\n?/g, "\n");
+}
+
 let renderCounter = 0;
 
 export function MermaidPreview({
@@ -49,6 +70,7 @@ export function MermaidPreview({
       return;
     }
     (async () => {
+      const cleaned = sanitizeMermaidSource(code);
       try {
         const mermaid = await loadMermaid();
         // 每次渲染前重设主题：用户切主题后下次渲染就能跟上
@@ -60,13 +82,23 @@ export function MermaidPreview({
         });
         renderCounter += 1;
         const id = `mermaid-${Date.now()}-${renderCounter}`;
-        const result = await mermaid.render(id, code);
+        const result = await mermaid.render(id, cleaned);
         if (!cancelled) {
           setSvg(result.svg);
           setError(null);
         }
       } catch (e) {
         if (!cancelled) {
+          // 解析失败时把可疑字符的 codepoint 一起打到控制台，方便定位"看着对但报错"的输入
+          const suspicious = [...cleaned]
+            .map((ch, i) => {
+              const cp = ch.codePointAt(0) ?? 0;
+              return cp > 0x7f ? `${i}:U+${cp.toString(16).toUpperCase()}(${ch})` : null;
+            })
+            .filter(Boolean);
+          if (suspicious.length > 0) {
+            console.warn("[Mermaid] 非 ASCII 字符位置：", suspicious);
+          }
           setError(e instanceof Error ? e.message : String(e));
           setSvg(null);
         }
