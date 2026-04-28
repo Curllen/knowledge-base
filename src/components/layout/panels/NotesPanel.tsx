@@ -20,10 +20,10 @@ import {
   Trash,
   Plus,
   FolderOpen,
-  FolderInput,
   Folder as FolderIcon,
   FileText,
   ChevronsDownUp,
+  LayoutTemplate,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -34,7 +34,14 @@ import { folderApi, importApi, noteApi } from "@/lib/api";
 import type { Folder, Note, ScannedFile } from "@/types";
 import { parseEmojiPrefix } from "@/lib/treeIcons";
 import { NewNoteButton } from "@/components/NewNoteButton";
-import { createBlankAndOpen } from "@/lib/noteCreator";
+import { FileTypeIcon } from "@/components/FileTypeIcon";
+import { TemplatePickerModal } from "@/components/TemplatePickerModal";
+import {
+  createBlankAndOpen,
+  importPdfsFlow,
+  importTextFlow,
+  importWordFlow,
+} from "@/lib/noteCreator";
 import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 
 /**
@@ -206,6 +213,14 @@ export function NotesPanel() {
   // 正在请求的 folderId 集合，避免同一个文件夹并发请求
   const loadingNotesRef = useRef<Set<number>>(new Set());
 
+  // 未分类笔记（folder_id IS NULL）：底部"未分类"虚拟节点展开时按需加载，
+  // 让用户在 NotesPanel 顶部"+ 新建笔记"建出来的 null-folder 笔记能立刻看到。
+  // 展开/收起态走 store 持久化（跨视图保留），笔记列表本地缓存（首次展开后秒开）。
+  const uncategorizedExpanded = useAppStore((s) => s.notesUncategorizedExpanded);
+  const setUncategorizedExpanded = useAppStore((s) => s.setNotesUncategorizedExpanded);
+  const [uncategorizedNotes, setUncategorizedNotes] = useState<Note[]>([]);
+  const loadingUncategorizedRef = useRef(false);
+
   /** 拉某个文件夹的直属笔记（include_descendants=false） */
   async function loadNotesForFolder(folderId: number) {
     if (loadingNotesRef.current.has(folderId)) return;
@@ -229,6 +244,24 @@ export function NotesPanel() {
     }
   }
 
+  /** 拉未分类笔记（folder_id IS NULL） */
+  async function loadUncategorizedNotes() {
+    if (loadingUncategorizedRef.current) return;
+    loadingUncategorizedRef.current = true;
+    try {
+      const r = await noteApi.list({
+        uncategorized: true,
+        page: 1,
+        page_size: NOTES_PER_FOLDER_LIMIT,
+      });
+      setUncategorizedNotes(r.items);
+    } catch (e) {
+      console.warn("[notes-panel] 加载未分类笔记失败:", e);
+    } finally {
+      loadingUncategorizedRef.current = false;
+    }
+  }
+
   // 用 store 里的预热缓存做种子，避免首次打开 Panel 时空白闪烁；
   // useEffect 仍会后台 loadFolders 拿最新数据替换。
   const [folders, setFolders] = useState<Folder[]>(
@@ -239,7 +272,17 @@ export function NotesPanel() {
     () => useAppStore.getState().prefetchedFolders === null,
   );
   const [folderExpanded, setFolderExpanded] = useState(true);
-  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
+
+  // 文件夹展开状态由 store 的"折叠集合"派生：collapsed 之外的所有文件夹 id 视为展开。
+  // 这样新建文件夹默认展开（因为不在 collapsed 集合里），符合直觉；
+  // 用户每次操作 → setNotesFolderCollapsed → 自动 persist → 跨视图/重启保留。
+  const collapsedFolderKeys = useAppStore((s) => s.notesCollapsedFolderKeys);
+  const allFolderKeys = useMemo(() => collectAllKeys(folders), [folders]);
+  const expandedKeys = useMemo<React.Key[]>(() => {
+    if (allFolderKeys.length === 0) return [];
+    const collapsed = new Set(collapsedFolderKeys);
+    return allFolderKeys.filter((k) => !collapsed.has(k));
+  }, [allFolderKeys, collapsedFolderKeys]);
 
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [newRootName, setNewRootName] = useState("");
@@ -269,6 +312,9 @@ export function NotesPanel() {
     rootPath: string;
     folderId: number;
   } | null>(null);
+
+  // 右键"从模板…"弹窗状态：folderId=null 表示尚未打开
+  const [templatePickerFolder, setTemplatePickerFolder] = useState<number | null>(null);
 
   // Dropdown trigger=[] 不会自己处理外部点击关闭，手动挂全局监听
   useEffect(() => {
@@ -306,13 +352,6 @@ export function NotesPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foldersRefreshTick]);
 
-  useEffect(() => {
-    if (folders.length > 0 && expandedKeys.length === 0) {
-      setExpandedKeys(collectAllKeys(folders));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folders]);
-
   // notes 数据变化时（新建/编辑/删除）：清空缓存 + 重拉所有已展开的文件夹。
   // 避免遗留旧标题。expand 阶段没拉过的文件夹不需要预热。
   useEffect(() => {
@@ -326,18 +365,41 @@ export function NotesPanel() {
     }
     setNotesByFolder(new Map());
     expandedFolderIds.forEach((id) => void loadNotesForFolder(id));
+    // 同步重拉未分类（仅在已展开时；折叠态等下次展开按需拉）
+    if (uncategorizedExpanded) {
+      void loadUncategorizedNotes();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notesRefreshTick]);
 
-  /** 展开/收起：每次有"新展开"的文件夹就触发一次按需加载 */
+  // 切换"未分类"展开：展开时第一次进入要拉数据；折叠不卸载缓存（下次展开秒开）
+  useEffect(() => {
+    if (uncategorizedExpanded && uncategorizedNotes.length === 0) {
+      void loadUncategorizedNotes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uncategorizedExpanded]);
+
+  /**
+   * 展开/收起：把 antd 给的 keys 视作"用户期望展开的全集"，
+   * 反推折叠集合 = 所有现存文件夹 id - 期望展开的 → 写入 store 持久化。
+   * 同时对"新出现"的展开节点触发按需加载。
+   */
   function handleExpand(keys: React.Key[]) {
-    const prevSet = new Set(expandedKeys.map(String));
-    setExpandedKeys(keys);
+    const expandedFolderSet = new Set<string>();
     for (const k of keys) {
       const s = String(k);
-      if (prevSet.has(s)) continue;
       if (s.startsWith(NEW_NODE_PREFIX) || isNoteKey(s)) continue;
-      const id = Number(s);
+      if (Number.isFinite(Number(s))) expandedFolderSet.add(s);
+    }
+
+    const prevSet = new Set(expandedKeys.map(String));
+    const newCollapsed = allFolderKeys.filter((k) => !expandedFolderSet.has(k));
+    useAppStore.getState().setNotesAllFoldersCollapsed(newCollapsed);
+
+    for (const k of expandedFolderSet) {
+      if (prevSet.has(k)) continue;
+      const id = Number(k);
       if (Number.isFinite(id) && !notesByFolder.has(id)) {
         void loadNotesForFolder(id);
       }
@@ -362,6 +424,8 @@ export function NotesPanel() {
     try {
       const list = await folderApi.list();
       setFolders(list);
+      // 顺手清理已删除文件夹在折叠集合里的孤儿 id，避免持久化无限沉淀
+      useAppStore.getState().pruneNotesCollapsedFolders(collectAllKeys(list));
     } catch (e) {
       console.error("加载文件夹失败:", e);
     } finally {
@@ -435,9 +499,7 @@ export function NotesPanel() {
       await folderApi.create(name, Number(parentKey));
       setNewChildName("");
       setCreatingUnderKey(null);
-      setExpandedKeys((prev) =>
-        prev.includes(parentKey) ? prev : [...prev, parentKey],
-      );
+      useAppStore.getState().setNotesFolderCollapsed(parentKey, false);
       loadFolders();
       useAppStore.getState().bumpFoldersRefresh();
     } catch (e) {
@@ -448,9 +510,7 @@ export function NotesPanel() {
   function startCreateChild(parentKey: string) {
     setCreatingUnderKey(parentKey);
     setNewChildName("");
-    setExpandedKeys((prev) =>
-      prev.includes(parentKey) ? prev : [...prev, parentKey],
-    );
+    useAppStore.getState().setNotesFolderCollapsed(parentKey, false);
   }
 
   // ─── 重命名 ─────────────────────────────────
@@ -690,6 +750,17 @@ export function NotesPanel() {
 
     lastClickRef.current = { key, time: now };
 
+    // 点文件夹标题 = 切换展开/折叠（与 chevron 行为对齐，VS Code / Finder 同款）
+    // 第一次点：展开（按需加载笔记）；再点：折叠。chevron 仍可单独点。
+    const wasExpanded = expandedKeys.some((k) => String(k) === key);
+    useAppStore.getState().setNotesFolderCollapsed(key, wasExpanded);
+    if (!wasExpanded) {
+      const id = Number(key);
+      if (Number.isFinite(id) && !notesByFolder.has(id)) {
+        void loadNotesForFolder(id);
+      }
+    }
+
     if (selectedKey === key) {
       setSelectedKey(null);
       navigate("/notes");
@@ -715,7 +786,18 @@ export function NotesPanel() {
 
   function buildMenuItems(key: string, name: string): MenuProps["items"] {
     const close = () => setContextMenu(null);
+    const folderId = Number(key);
     return [
+      // ─── 创建：高频操作放第一位 ───
+      {
+        key: "new-note",
+        icon: <NotebookText size={14} />,
+        label: "在此新建笔记",
+        onClick: () => {
+          createBlankAndOpen(folderId, navigate);
+          close();
+        },
+      },
       {
         key: "new-child",
         icon: <Plus size={14} />,
@@ -725,22 +807,24 @@ export function NotesPanel() {
           close();
         },
       },
+      { type: "divider" },
       {
-        key: "new-note",
-        icon: <NotebookText size={14} />,
-        label: "在此新建笔记",
+        key: "new-from-template",
+        icon: <LayoutTemplate size={14} />,
+        label: "从模板新建…",
         onClick: () => {
-          createBlankAndOpen(Number(key), navigate);
+          setTemplatePickerFolder(folderId);
           close();
         },
       },
       { type: "divider" },
+      // ─── 导入：与"+ 新建笔记"按钮口径一致（MD/TXT/PDF/Word），文件夹递归是侧边栏独占 ───
       {
-        key: "import-md-files",
-        icon: <FolderInput size={14} />,
-        label: "导入 Markdown 文件…",
+        key: "import-text",
+        icon: <FileTypeIcon type="md" size={14} />,
+        label: "导入 Markdown / TXT 文件…",
         onClick: () => {
-          void handleImportMdFiles(key);
+          void importTextFlow(folderId);
           close();
         },
       },
@@ -750,6 +834,24 @@ export function NotesPanel() {
         label: "导入 Markdown 文件夹…",
         onClick: () => {
           void handleImportMdFolder(key);
+          close();
+        },
+      },
+      {
+        key: "import-pdf",
+        icon: <FileTypeIcon type="pdf" size={14} />,
+        label: "导入 PDF…",
+        onClick: () => {
+          void importPdfsFlow(folderId);
+          close();
+        },
+      },
+      {
+        key: "import-word",
+        icon: <FileTypeIcon type="docx" size={14} />,
+        label: "导入 Word…",
+        onClick: () => {
+          void importWordFlow(folderId);
           close();
         },
       },
@@ -778,40 +880,8 @@ export function NotesPanel() {
   }
 
   // ─── 导入到当前文件夹 ─────────────────────
-
-  async function handleImportMdFiles(folderKey: string) {
-    const folderId = Number(folderKey);
-    try {
-      const picked = await openDialog({
-        multiple: true,
-        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
-      });
-      if (!picked) return;
-      const paths = Array.isArray(picked) ? picked : [picked];
-      if (paths.length === 0) return;
-      const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
-      try {
-        const result = await importApi.importSelected(paths, folderId);
-        hide();
-        if (result.imported > 0) {
-          message.success(`已导入 ${result.imported} 篇到此文件夹`);
-        } else if (result.skipped > 0) {
-          message.info(`全部 ${result.skipped} 篇已跳过（空文件）`);
-        }
-        if (result.errors.length > 0) {
-          message.warning(`${result.errors.length} 个文件失败，详见控制台`);
-          console.warn("[import] 失败明细:", result.errors);
-        }
-        useAppStore.getState().bumpNotesRefresh();
-        useAppStore.getState().bumpFoldersRefresh();
-      } catch (e) {
-        hide();
-        message.error(`导入失败: ${e}`);
-      }
-    } catch (e) {
-      message.error(`选择文件失败: ${e}`);
-    }
-  }
+  // 单文件导入（MD/TXT/PDF/Word）已统一走 noteCreator 里的 importTextFlow / importPdfsFlow / importWordFlow，
+  // 这里只保留侧边栏独有的"扫描文件夹递归导入"流程（带 ImportPreviewModal 选副本策略 + 保留层级）。
 
   async function handleImportMdFolder(folderKey: string) {
     const folderId = Number(folderKey);
@@ -1087,11 +1157,12 @@ export function NotesPanel() {
           size="small"
           icon={<ChevronsDownUp size={14} />}
           onClick={() => {
-            // 折叠/展开全部文件夹
+            // 折叠/展开全部文件夹（state 走 store，自动 persist）
+            const store = useAppStore.getState();
             if (expandedKeys.length === 0) {
-              setExpandedKeys(collectAllKeys(folders));
+              store.clearNotesCollapsedFolders();
             } else {
-              setExpandedKeys([]);
+              store.setNotesAllFoldersCollapsed(allFolderKeys);
             }
           }}
           style={{ width: 24, height: 24, padding: 0 }}
@@ -1124,6 +1195,9 @@ export function NotesPanel() {
         style={{
           minHeight: 0,
           paddingTop: 4,
+          // 始终预留滚动条空间——展开未分类后内容超长出现滚动条时，
+          // 不会让上方文件夹/标题区的可用宽度突然收缩。WebView2 / Chromium 94+ 原生支持
+          scrollbarGutter: "stable",
           outline: fileDragOver
             ? `2px dashed ${token.colorPrimary}`
             : "none",
@@ -1291,37 +1365,153 @@ export function NotesPanel() {
                 </div>
               )
             )}
-            {/* 常驻虚拟"未分类"文件夹：folder_id IS NULL 的笔记自动归在这里，
-                不需要用户手动建。点击跳到 /notes?folder=uncategorized */}
-            <div
-              className="cursor-pointer select-none flex items-center gap-2"
-              style={{
-                padding: "4px 10px",
-                marginTop: 4,
-                borderRadius: 4,
-                fontSize: 13,
-                color: isUncategorizedActive
-                  ? token.colorPrimary
-                  : token.colorTextSecondary,
-                background: isUncategorizedActive
-                  ? token.colorPrimaryBg
-                  : "transparent",
-                transition: "background-color .12s",
-              }}
-              onClick={() => navigate("/notes?folder=uncategorized")}
-              onMouseEnter={(e) => {
-                if (!isUncategorizedActive) {
-                  e.currentTarget.style.background = token.colorFillTertiary;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isUncategorizedActive) {
-                  e.currentTarget.style.background = "transparent";
-                }
-              }}
-            >
-              <FolderIcon size={13} style={{ opacity: 0.6 }} />
-              <span>未分类</span>
+            {/* 常驻虚拟"未分类"文件夹：folder_id IS NULL 的笔记归在这里。
+                · 点 chevron 展开 → 直接看到所有未分类笔记的扁平列表
+                · 点标题文字 → 跳到 /notes?folder=uncategorized 看完整列表
+                这样从 NotesPanel 顶部"+ 新建笔记"建出来的笔记（默认 null folder）
+                能立刻在侧边栏看到，不用切到主区。 */}
+            <div style={{ marginTop: 4 }}>
+              <div
+                className="select-none flex items-center gap-1"
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 4,
+                  fontSize: 13,
+                  color: isUncategorizedActive
+                    ? token.colorPrimary
+                    : token.colorTextSecondary,
+                  background: isUncategorizedActive
+                    ? token.colorPrimaryBg
+                    : "transparent",
+                  transition: "background-color .12s",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isUncategorizedActive) {
+                    e.currentTarget.style.background = token.colorFillTertiary;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isUncategorizedActive) {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <span
+                  className="cursor-pointer flex items-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setUncategorizedExpanded(!uncategorizedExpanded);
+                  }}
+                  style={{ width: 14, height: 14, color: token.colorTextTertiary }}
+                  title={uncategorizedExpanded ? "收起" : "展开"}
+                >
+                  {uncategorizedExpanded ? (
+                    <ChevronDown size={11} strokeWidth={2.2} />
+                  ) : (
+                    <ChevronRight size={11} strokeWidth={2.2} />
+                  )}
+                </span>
+                <span
+                  className="cursor-pointer flex items-center gap-2 flex-1 min-w-0"
+                  onClick={() => {
+                    // 与文件夹一致：点标题 = 切换展开/折叠 + 跳主区
+                    setUncategorizedExpanded(!uncategorizedExpanded);
+                    navigate("/notes?folder=uncategorized");
+                  }}
+                >
+                  <FolderIcon size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
+                  <span className="truncate">未分类</span>
+                  {uncategorizedNotes.length > 0 && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: token.colorTextQuaternary,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {uncategorizedNotes.length}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {uncategorizedExpanded && (
+                <div style={{ paddingLeft: 22 }}>
+                  {uncategorizedNotes.length === 0 ? (
+                    <div
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: 12,
+                        color: token.colorTextQuaternary,
+                      }}
+                    >
+                      暂无未分类笔记
+                    </div>
+                  ) : (
+                    uncategorizedNotes.map((n) => {
+                      const displayTitle =
+                        tabTitleByNoteId.get(n.id) || n.title || "未命名";
+                      const { emoji, rest } = parseEmojiPrefix(displayTitle);
+                      const display = rest || displayTitle;
+                      const noteSelected = selectedKey === noteKey(n.id);
+                      return (
+                        <div
+                          key={n.id}
+                          className="cursor-pointer select-none flex items-center gap-1.5"
+                          style={{
+                            padding: "3px 10px",
+                            borderRadius: 4,
+                            fontSize: 13,
+                            color: noteSelected
+                              ? token.colorPrimary
+                              : token.colorText,
+                            background: noteSelected
+                              ? token.colorPrimaryBg
+                              : "transparent",
+                            transition: "background-color .12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!noteSelected) {
+                              e.currentTarget.style.background =
+                                token.colorFillTertiary;
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!noteSelected) {
+                              e.currentTarget.style.background = "transparent";
+                            }
+                          }}
+                          onClick={() => {
+                            setSelectedKey(noteKey(n.id));
+                            navigate(`/notes/${n.id}`);
+                          }}
+                          title={displayTitle}
+                        >
+                          {emoji ? (
+                            <span
+                              style={{
+                                fontSize: 14,
+                                flexShrink: 0,
+                                lineHeight: 1,
+                              }}
+                            >
+                              {emoji}
+                            </span>
+                          ) : (
+                            <FileText
+                              size={13}
+                              style={{
+                                flexShrink: 0,
+                                color: token.colorTextTertiary,
+                              }}
+                            />
+                          )}
+                          <span className="truncate">{display}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1409,6 +1599,13 @@ export function NotesPanel() {
           }}
         />
       )}
+
+      {/* 右键"从模板新建…" */}
+      <TemplatePickerModal
+        open={templatePickerFolder !== null}
+        folderId={templatePickerFolder}
+        onClose={() => setTemplatePickerFolder(null)}
+      />
     </div>
   );
 }
