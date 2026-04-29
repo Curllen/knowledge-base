@@ -29,6 +29,10 @@ import {
   Check,
   Star,
   Type,
+  Copy,
+  Edit3,
+  Trash2,
+  ExternalLink,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -36,8 +40,14 @@ import {
   dailyApi,
   systemApi,
   taskApi,
+  trashApi,
   aiChatApi,
 } from "@/lib/api";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 import { relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
@@ -202,6 +212,118 @@ export default function HomePage() {
     [message, refreshTaskStats, loadDashboard],
   );
 
+  // ─── 右键菜单（最近笔记 + 今日待办两个 widget） ─────
+  const noteCtx = useContextMenu<Note>();
+  const taskCtx = useContextMenu<Task>();
+
+  const noteMenuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = noteCtx.state.payload;
+    if (!p) return [];
+    return [
+      {
+        key: "open",
+        label: "打开笔记",
+        icon: <ExternalLink size={13} />,
+        onClick: () => {
+          noteCtx.close();
+          navigate(`/notes/${p.id}`);
+        },
+      },
+      {
+        key: "copy-wiki",
+        label: "复制为 wiki 链接",
+        icon: <Copy size={13} />,
+        onClick: () => {
+          noteCtx.close();
+          const link = `[[${p.title || "无标题"}]]`;
+          navigator.clipboard
+            .writeText(link)
+            .then(() => message.success(`已复制：${link}`))
+            .catch((e) => message.error(`复制失败：${e}`));
+        },
+      },
+      { type: "divider" },
+      {
+        key: "trash",
+        label: "移到回收站",
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onClick: () => {
+          noteCtx.close();
+          Modal.confirm({
+            title: `把「${p.title || "(无标题)"}」移到回收站？`,
+            content: "可以在回收站恢复。",
+            okText: "移入回收站",
+            okButtonProps: { danger: true },
+            async onOk() {
+              try {
+                await trashApi.softDelete(p.id);
+                message.success("已移到回收站");
+                loadDashboard();
+              } catch (e) {
+                message.error(`删除失败：${e}`);
+              }
+            },
+          });
+        },
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteCtx.state.payload]);
+
+  const taskMenuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = taskCtx.state.payload;
+    if (!p) return [];
+    const done = p.status === 1;
+    return [
+      {
+        key: "toggle",
+        label: done ? "标记为未完成" : "标记已完成",
+        icon: <Check size={13} />,
+        onClick: () => {
+          taskCtx.close();
+          void handleToggleTask(p.id);
+        },
+      },
+      {
+        key: "edit",
+        label: "在待办页打开",
+        icon: <Edit3 size={13} />,
+        onClick: () => {
+          taskCtx.close();
+          navigate(`/tasks?taskId=${p.id}`);
+        },
+      },
+      { type: "divider" },
+      {
+        key: "delete",
+        label: "删除任务",
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onClick: () => {
+          taskCtx.close();
+          Modal.confirm({
+            title: `删除任务「${p.title || "(无标题)"}」？`,
+            content: "此操作不可恢复。",
+            okText: "删除",
+            okButtonProps: { danger: true },
+            async onOk() {
+              try {
+                await taskApi.delete(p.id);
+                message.success("已删除");
+                refreshTaskStats();
+                loadDashboard();
+              } catch (e) {
+                message.error(`删除失败：${e}`);
+              }
+            },
+          });
+        },
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskCtx.state.payload]);
+
   // ─── 问 AI 直接发送 ───────────────────────────────
   // 新建会话后通过 location.state 把 pendingPrompt 传给 AI 页,
   // AI 页的 effect 会自动 setActiveConvId + 发送
@@ -302,7 +424,21 @@ export default function HomePage() {
 
   // ─── 渲染 ─────────────────────────────────────────
   return (
-    <div className="max-w-5xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div
+      // 外层 wrapper 撑满 Content 区域 —— max-w-5xl 居中后两侧空白属于 Content
+      // 不属于内层 div，事件不会冒泡。把 onContextMenu 放在撑满的 wrapper 上
+      // 才能拦到这部分空白的右键
+      style={{ width: "100%", minHeight: "100%" }}
+      onContextMenu={(e) => {
+        const t = e.target as HTMLElement;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+      }}
+    >
+    <div
+      className="max-w-5xl mx-auto"
+      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+    >
 
       {/* ① 顶部搜索 + 新建笔记
           搜索：输入即下拉建议（笔记 + 待办，点击跳详情），回车去 /search 全量结果 */}
@@ -456,11 +592,21 @@ export default function HomePage() {
                       ? token.colorPrimary
                       : token.colorTextTertiary;
                 const desc = task.description?.trim();
+                const ctxActive = taskCtx.state.payload?.id === task.id;
                 return (
                   <li
                     key={task.id}
                     className="flex items-start gap-2.5"
-                    style={{ padding: "4px 0" }}
+                    style={{
+                      padding: "4px 6px",
+                      borderRadius: 4,
+                      background: ctxActive ? token.colorPrimaryBg : "transparent",
+                      transition: "background .12s",
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      taskCtx.open(e.nativeEvent, task);
+                    }}
                   >
                     <input
                       type="checkbox"
@@ -559,12 +705,23 @@ export default function HomePage() {
             />
           ) : (
             <ul className="flex flex-col gap-2 m-0 p-0 list-none">
-              {displayedRecent.map((note) => (
+              {displayedRecent.map((note) => {
+                const ctxActive = noteCtx.state.payload?.id === note.id;
+                return (
                 <li
                   key={note.id}
                   className="cursor-pointer"
-                  style={{ padding: "4px 0" }}
+                  style={{
+                    padding: "4px 6px",
+                    borderRadius: 4,
+                    background: ctxActive ? token.colorPrimaryBg : "transparent",
+                    transition: "background .12s",
+                  }}
                   onClick={() => navigate(`/notes/${note.id}`)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    noteCtx.open(e.nativeEvent, note);
+                  }}
                 >
                   <div className="flex items-center gap-1.5">
                     {note.is_daily && (
@@ -586,7 +743,8 @@ export default function HomePage() {
                     {relativeTime(note.updated_at)} · {note.word_count} 字
                   </Text>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           )}
         </Card>
@@ -915,6 +1073,25 @@ export default function HomePage() {
           </div>
         )}
       </Modal>
+
+      {/* 最近笔记右键菜单 */}
+      <ContextMenuOverlay
+        open={!!noteCtx.state.payload}
+        x={noteCtx.state.x}
+        y={noteCtx.state.y}
+        items={noteMenuItems}
+        onClose={noteCtx.close}
+      />
+
+      {/* 今日待办右键菜单 */}
+      <ContextMenuOverlay
+        open={!!taskCtx.state.payload}
+        x={taskCtx.state.x}
+        y={taskCtx.state.y}
+        items={taskMenuItems}
+        onClose={taskCtx.close}
+      />
+    </div>
     </div>
   );
 }
