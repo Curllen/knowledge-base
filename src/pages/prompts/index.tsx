@@ -20,6 +20,7 @@ import {
   Copy as CopyIcon,
   Edit3,
   Plus,
+  Power,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -29,6 +30,11 @@ import type {
   PromptTemplate,
   PromptTemplateInput,
 } from "@/types";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 
 const OUTPUT_MODE_OPTIONS: Array<{
   value: PromptOutputMode;
@@ -206,6 +212,55 @@ export default function PromptsPage() {
     }
   }
 
+  // ─── 右键菜单 ────────────────────────────────
+  const ctx = useContextMenu<PromptTemplate>();
+
+  const menuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = ctx.state.payload;
+    if (!p) return [];
+    return [
+      {
+        key: "edit",
+        label: "编辑",
+        icon: <Edit3 size={13} />,
+        onClick: () => {
+          ctx.close();
+          openEdit(p);
+        },
+      },
+      {
+        key: "clone",
+        label: "复制为新模板",
+        icon: <CopyIcon size={13} />,
+        onClick: () => {
+          ctx.close();
+          openClone(p);
+        },
+      },
+      {
+        key: "toggle",
+        label: p.enabled ? "禁用" : "启用",
+        icon: <Power size={13} />,
+        onClick: () => {
+          ctx.close();
+          void handleToggleEnabled(p, !p.enabled);
+        },
+      },
+      { type: "divider" },
+      {
+        key: "delete",
+        label: "删除",
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onClick: () => {
+          ctx.close();
+          void handleDelete(p);
+        },
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.state.payload]);
+
   const columns = useMemo<ColumnsType<PromptTemplate>>(
     () => [
       {
@@ -303,7 +358,16 @@ export default function PromptsPage() {
   );
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div
+      className="p-6 max-w-5xl mx-auto"
+      onContextMenu={(e) => {
+        // 顶层兜底：表格行有自己的 onContextMenu 会先 preventDefault；
+        // 其他位置吞 WebView 默认菜单。input/textarea 白名单留给表单输入
+        const t = e.target as HTMLElement;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+      }}
+    >
       <Card
         title={
           <div className="flex items-center gap-2">
@@ -338,6 +402,16 @@ export default function PromptsPage() {
             columns={columns}
             dataSource={list}
             pagination={false}
+            onRow={(record) => ({
+              onContextMenu: (e) => {
+                e.preventDefault();
+                ctx.open(e.nativeEvent, record);
+              },
+              style:
+                ctx.state.payload?.id === record.id
+                  ? { background: token.colorPrimaryBg }
+                  : undefined,
+            })}
           />
         )}
       </Card>
@@ -469,6 +543,14 @@ export default function PromptsPage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ContextMenuOverlay
+        open={!!ctx.state.payload}
+        x={ctx.state.x}
+        y={ctx.state.y}
+        items={menuItems}
+        onClose={ctx.close}
+      />
     </div>
   );
 }
