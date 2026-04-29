@@ -375,7 +375,19 @@ export function AppLayout() {
   }, [handleGlobalKeyDown]);
 
   return (
-    <Layout style={{ height: "100vh", position: "relative" }}>
+    <Layout
+      style={{ height: "100vh", position: "relative" }}
+      // 全局右键守卫：input/textarea/[contenteditable=true] 白名单（搜索框 / Tiptap 编辑器
+      // 内部仍走浏览器原生剪切/复制/粘贴菜单），其他位置吞 WebView 默认菜单。
+      // 各 panel / 页面已接入的自定义菜单子级 onContextMenu 先跑 preventDefault + ctx.open，
+      // 不影响。这相当于提前启用 #16 守卫的等效效果——P0/P1 已接入完，体验全局一致
+      onContextMenu={(e) => {
+        const t = e.target as HTMLElement | null;
+        if (!t) return;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+      }}
+    >
       {activeTheme === "dark-starry" && <StarryBackground />}
       {!focusMode && (
         <Sider

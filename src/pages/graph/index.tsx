@@ -1,10 +1,21 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Spin, Empty, theme as antdTheme, Segmented, Tooltip } from "antd";
-import { Maximize2, Minimize2, RotateCcw } from "lucide-react";
+import {
+  Maximize2,
+  Minimize2,
+  RotateCcw,
+  ExternalLink,
+  Crosshair,
+} from "lucide-react";
 import { Graph } from "@antv/g6";
 import { linkApi } from "@/lib/api";
 import type { GraphData } from "@/types";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 
 export default function GraphPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -16,8 +27,56 @@ export default function GraphPage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [layout, setLayout] = useState<string>("d3-force");
 
+  // ─── 节点右键菜单 ────────────────────────────
+  const ctx = useContextMenu<{ nodeId: string; title: string }>();
+
+  const menuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = ctx.state.payload;
+    if (!p) return [];
+    return [
+      {
+        key: "open",
+        label: "打开笔记",
+        icon: <ExternalLink size={13} />,
+        onClick: () => {
+          ctx.close();
+          navigate(`/notes/${p.nodeId}`);
+        },
+      },
+      {
+        key: "focus",
+        label: "居中此节点",
+        icon: <Crosshair size={13} />,
+        onClick: () => {
+          ctx.close();
+          // G6 v5：把指定节点移到视图中心
+          try {
+            graphRef.current?.focusElement(p.nodeId);
+          } catch {
+            // focusElement 可能在某些版本叫 focus；失败时退到 fitCenter
+            graphRef.current?.fitCenter();
+          }
+        },
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.state.payload, navigate]);
+
   useEffect(() => {
     loadGraphData();
+  }, []);
+
+  // 给 G6 画布容器原生挂 contextmenu capture-phase listener，吞 WebView 默认菜单。
+  // G6 v5 的 canvas 内部会拦截 contextmenu 不冒泡到 React 外层 div，所以
+  // 顶层 <div onContextMenu> 收不到画布空白处的右键事件。capture phase 的
+  // 原生 listener 比 G6 内部 bubble-phase 监听器先触发，主动 preventDefault
+  // 让 WebView 默认菜单不弹；节点的 graph.on("node:contextmenu") 仍然能跑
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: MouseEvent) => e.preventDefault();
+    el.addEventListener("contextmenu", handler, true);
+    return () => el.removeEventListener("contextmenu", handler, true);
   }, []);
 
   async function loadGraphData() {
@@ -146,6 +205,21 @@ export default function GraphPage() {
       }
     });
 
+    // 节点右键弹自定义菜单
+    graph.on("node:contextmenu", (evt: any) => {
+      // 阻止 WebView 默认右键菜单（不同 G6 版本字段名可能不同，逐个试）
+      const native: MouseEvent | undefined =
+        evt?.nativeEvent ?? evt?.originalEvent ?? evt?.event;
+      native?.preventDefault?.();
+      const nodeId = String(evt?.target?.id ?? "");
+      if (!nodeId) return;
+      const node = graphData.nodes.find((n) => String(n.id) === nodeId);
+      const title = node?.title ?? "";
+      const x = native?.clientX ?? evt?.client?.x ?? 0;
+      const y = native?.clientY ?? evt?.client?.y ?? 0;
+      ctx.open({ clientX: x, clientY: y }, { nodeId, title });
+    });
+
     graphRef.current = graph;
 
     return () => {
@@ -185,7 +259,12 @@ export default function GraphPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full"
+      // 顶层兜底：节点右键由 G6 监听并自管 preventDefault；其他位置（画布空白 /
+      // 工具栏 / 图例）右键不弹 WebView 默认菜单。本页无 input
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {/* 顶部工具栏 */}
       <div
         className="flex items-center justify-between px-4 py-2 shrink-0"
@@ -295,6 +374,14 @@ export default function GraphPage() {
         ref={containerRef}
         className="flex-1"
         style={{ minHeight: 0, background: token.colorBgLayout }}
+      />
+
+      <ContextMenuOverlay
+        open={!!ctx.state.payload}
+        x={ctx.state.x}
+        y={ctx.state.y}
+        items={menuItems}
+        onClose={ctx.close}
       />
     </div>
   );
