@@ -1,9 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, message, theme as antdTheme } from "antd";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
-import { dailyApi } from "@/lib/api";
+import { Button, Modal, message, theme as antdTheme } from "antd";
+import { Calendar, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import { dailyApi, trashApi } from "@/lib/api";
 import { useAppStore } from "@/store";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 
 /**
  * DailyPanel —— Activity Bar 模式下"每日笔记"视图的主面板。
@@ -103,12 +108,78 @@ export function DailyPanel() {
     setViewMonth({ year, month });
   }
 
+  // ─── 右键菜单 ────────────────────────────────
+  // payload 带 hasEntry：决定「删除日记」菜单项是否显示
+  const ctx = useContextMenu<{ date: string; hasEntry: boolean }>();
+
+  const menuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = ctx.state.payload;
+    if (!p) return [];
+    const list: ContextMenuEntry[] = [
+      { key: "copy", label: "复制日期", icon: <Copy size={13} /> },
+    ];
+    if (p.hasEntry) {
+      list.push({ type: "divider" });
+      list.push({
+        key: "delete",
+        label: "删除日记",
+        icon: <Trash2 size={13} />,
+        danger: true,
+      });
+    }
+    return list;
+  }, [ctx.state.payload]);
+
+  function onMenuClick(key: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    const p = ctx.state.payload;
+    if (!p) return;
+    ctx.close();
+
+    if (key === "copy") {
+      navigator.clipboard
+        .writeText(p.date)
+        .then(() => message.success(`已复制日期：${p.date}`))
+        .catch((err) => message.error(`复制失败：${err}`));
+      return;
+    }
+
+    if (key === "delete") {
+      Modal.confirm({
+        title: `删除 ${p.date} 的日记？`,
+        content: "会移到回收站，可以恢复。",
+        okText: "删除",
+        okButtonProps: { danger: true },
+        async onOk() {
+          try {
+            const note = await dailyApi.get(p.date);
+            if (!note) {
+              message.warning("该日记已不存在");
+              return;
+            }
+            await trashApi.softDelete(note.id);
+            message.success("已移到回收站");
+            // 触发 DailyPanel 自身的 useEffect 重拉本月日期 + pages/daily 列表刷新
+            useAppStore.getState().bumpNotesRefresh();
+            // 如果当前选中的就是被删的日期，跳到今天避免主区显示已删笔记
+            if (selectedDate === p.date) {
+              goToDate(today);
+            }
+          } catch (err) {
+            message.error(`删除失败：${err}`);
+          }
+        },
+      });
+    }
+  }
+
   const isViewingCurrentMonth = (() => {
     const { year, month } = parseDate(today);
     return viewMonth.year === year && viewMonth.month === month;
   })();
 
   return (
+    <>
     <div
       className="flex flex-col h-full"
       style={{ overflow: "hidden" }}
@@ -183,7 +254,12 @@ export function DailyPanel() {
               selected={selectedDate === today}
               isToday
               hasEntry={false}
+              contextActive={ctx.state.payload?.date === today}
               onClick={() => goToDate(today)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                ctx.open(e.nativeEvent, { date: today, hasEntry: false });
+              }}
               token={token}
             />
           )}
@@ -223,13 +299,27 @@ export function DailyPanel() {
               selected={selectedDate === d}
               isToday={d === today}
               hasEntry
+              contextActive={ctx.state.payload?.date === d}
               onClick={() => goToDate(d)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                ctx.open(e.nativeEvent, { date: d, hasEntry: true });
+              }}
               token={token}
             />
           ))
         )}
       </div>
     </div>
+    <ContextMenuOverlay
+      open={!!ctx.state.payload}
+      x={ctx.state.x}
+      y={ctx.state.y}
+      items={menuItems}
+      onClick={onMenuClick}
+      onClose={ctx.close}
+    />
+    </>
   );
 }
 
@@ -239,14 +329,19 @@ function DateRow({
   selected,
   isToday,
   hasEntry,
+  contextActive,
   onClick,
+  onContextMenu,
   token,
 }: {
   date: string;
   selected: boolean;
   isToday: boolean;
   hasEntry: boolean;
+  /** 右键菜单当前指向本行 → 加边框提示用户操作目标 */
+  contextActive?: boolean;
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   token: {
     colorPrimary: string;
     colorText: string;
@@ -259,6 +354,7 @@ function DateRow({
   return (
     <div
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className="cursor-pointer"
       style={{
         display: "flex",
@@ -269,7 +365,10 @@ function DateRow({
         background: selected ? `${token.colorPrimary}14` : "transparent",
         color: selected ? token.colorPrimary : token.colorText,
         fontWeight: selected ? 500 : undefined,
-        transition: "background .15s",
+        // 右键菜单指向本行 → 1px 实色描边提示
+        outline: contextActive ? `1px solid ${token.colorPrimary}` : "none",
+        outlineOffset: -1,
+        transition: "background .15s, outline .1s",
       }}
     >
       {/* 日期数字方块 */}

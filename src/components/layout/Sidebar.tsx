@@ -9,9 +9,11 @@ import {
   Input,
   message,
   Modal,
-  Dropdown,
-  type MenuProps,
 } from "antd";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 import {
   Home,
   NotebookText,
@@ -187,36 +189,7 @@ export function Sidebar() {
     ts: number;
   } | null>(null);
 
-  // Dropdown 的 trigger 为空数组时 antd 不会自己监听"外部点击关闭"，
-  // 这里手动挂全局 mousedown / Esc 监听，点到 .ant-dropdown 外或按 Esc 就关闭。
-  // 另外遇到右键再次打开新菜单（同一帧内 contextMenu 被 setState 替换）时，
-  // 用 capture 阶段的 mousedown，只对 button !== 2（非右键）做关闭，避免打架。
-  useEffect(() => {
-    if (!contextMenu) return;
-    function handleMouseDown(e: MouseEvent) {
-      if (e.button === 2) return; // 右键另建新菜单，由 onRightClick 处理
-      const target = e.target as HTMLElement | null;
-      // antd 5 的 submenu popup 在独立 portal（.ant-dropdown-menu-submenu-popup），
-      // 不在 .ant-dropdown 子树里；只查 .ant-dropdown 会把子菜单点击误杀掉。
-      if (
-        target &&
-        target.closest(
-          ".ant-dropdown, .ant-dropdown-menu, .ant-dropdown-menu-submenu-popup",
-        )
-      )
-        return;
-      setContextMenu(null);
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setContextMenu(null);
-    }
-    document.addEventListener("mousedown", handleMouseDown, true);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleMouseDown, true);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [contextMenu]);
+  // 外部点击 / Esc 关闭由 ContextMenuOverlay 内部自管，无需在此挂监听
 
   // 双击检测：记录最近一次点击时间，300ms 内同一节点再次点击视为双击
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
@@ -498,7 +471,7 @@ export function Sidebar() {
 
   // ─── 右键菜单 ─────────────────────────────
 
-  function buildMenuItems(key: string, name: string): MenuProps["items"] {
+  function buildMenuItems(key: string, name: string): ContextMenuEntry[] {
     const close = () => setContextMenu(null);
     return [
       {
@@ -688,6 +661,8 @@ export function Sidebar() {
 
     // 正常态：纯 span，点击跳转/重命名；右键菜单由 Tree 级 onRightClick 统一处理
     const name = String(node.title ?? "");
+    // 右键菜单当前指向本节点 → 文字外加 1px 描边提示
+    const contextActive = contextMenu?.key === key;
     return (
       <span
         className="flex items-center gap-1.5 w-full"
@@ -695,6 +670,15 @@ export function Sidebar() {
           e.stopPropagation();
           handleTitleClick(key);
         }}
+        style={
+          contextActive
+            ? {
+                outline: `1px solid ${token.colorPrimary}`,
+                outlineOffset: 2,
+                borderRadius: 4,
+              }
+            : undefined
+        }
       >
         <FolderOutlined style={{ flexShrink: 0 }} />
         <span className="truncate">{name}</span>
@@ -991,28 +975,15 @@ export function Sidebar() {
         style={{ border: "none", flexShrink: 0 }}
       />
 
-      {/* 右键菜单（幻影锚点，跟随鼠标坐标定位） */}
+      {/* 右键菜单（统一走 ContextMenuOverlay：跟随鼠标 + 自管 outside-close + 紧凑样式） */}
       {contextMenu && (
-        <Dropdown
-          key={contextMenu.ts}
+        <ContextMenuOverlay
           open
-          onOpenChange={(open) => {
-            if (!open) setContextMenu(null);
-          }}
-          menu={{ items: buildMenuItems(contextMenu.key, contextMenu.name) }}
-          trigger={[]}
-        >
-          <div
-            style={{
-              position: "fixed",
-              left: contextMenu.x,
-              top: contextMenu.y,
-              width: 1,
-              height: 1,
-              pointerEvents: "none",
-            }}
-          />
-        </Dropdown>
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMenuItems(contextMenu.key, contextMenu.name)}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {/* 扫描文件夹 → 预览 → 导入 */}

@@ -8,9 +8,11 @@ import {
   Input,
   message,
   Modal,
-  Dropdown,
-  type MenuProps,
 } from "antd";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 import {
   NotebookText,
   FolderPlus,
@@ -351,31 +353,7 @@ export function NotesPanel() {
   // 右键"从模板…"弹窗状态：folderId=null 表示尚未打开
   const [templatePickerFolder, setTemplatePickerFolder] = useState<number | null>(null);
 
-  // Dropdown trigger=[] 不会自己处理外部点击关闭，手动挂全局监听
-  useEffect(() => {
-    if (!contextMenu) return;
-    function handleMouseDown(e: MouseEvent) {
-      if (e.button === 2) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        target.closest(
-          ".ant-dropdown, .ant-dropdown-menu, .ant-dropdown-menu-submenu-popup",
-        )
-      )
-        return;
-      setContextMenu(null);
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setContextMenu(null);
-    }
-    document.addEventListener("mousedown", handleMouseDown, true);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleMouseDown, true);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [contextMenu]);
+  // 外部点击 / Esc 关闭由 ContextMenuOverlay 内部自管，无需在此挂监听
 
   // 双击判定：300ms 内同一节点视为双击（进入重命名）
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
@@ -889,7 +867,7 @@ export function NotesPanel() {
 
   // ─── 右键菜单 ─────────────────────────────
 
-  function buildMenuItems(key: string, name: string): MenuProps["items"] {
+  function buildMenuItems(key: string, name: string): ContextMenuEntry[] {
     const close = () => setContextMenu(null);
     const folderId = Number(key);
     return [
@@ -1189,6 +1167,15 @@ export function NotesPanel() {
     const name = String(node.title ?? "");
     const { emoji, rest } = parseEmojiPrefix(name);
     const display = rest || name;
+    // 右键菜单当前指向本节点 → 文字外加 1px 描边提示
+    const contextActive = contextMenu?.key === key;
+    const ctxStyle: React.CSSProperties = contextActive
+      ? {
+          outline: `1px solid ${token.colorPrimary}`,
+          outlineOffset: 2,
+          borderRadius: 4,
+        }
+      : {};
 
     if (isNoteKey(key)) {
       return (
@@ -1199,6 +1186,7 @@ export function NotesPanel() {
             handleTitleClick(key);
           }}
           title={name}
+          style={ctxStyle}
         >
           {emoji ? (
             <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
@@ -1224,6 +1212,7 @@ export function NotesPanel() {
           handleTitleClick(key);
         }}
         title={name}
+        style={ctxStyle}
       >
         {emoji ? (
           <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
@@ -1624,26 +1613,13 @@ export function NotesPanel() {
 
       {/* 右键菜单（幻影锚点） */}
       {contextMenu && (
-        <Dropdown
-          key={contextMenu.ts}
+        <ContextMenuOverlay
           open
-          onOpenChange={(open) => {
-            if (!open) setContextMenu(null);
-          }}
-          menu={{ items: buildMenuItems(contextMenu.key, contextMenu.name) }}
-          trigger={[]}
-        >
-          <div
-            style={{
-              position: "fixed",
-              left: contextMenu.x,
-              top: contextMenu.y,
-              width: 1,
-              height: 1,
-              pointerEvents: "none",
-            }}
-          />
-        </Dropdown>
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMenuItems(contextMenu.key, contextMenu.name)}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {/* 扫描文件夹 → 预览 → 导入 */}
