@@ -1,3 +1,10 @@
+# ─── Workspace 根 ────────────────────────────────────
+# 引入 mcp/ 子 crate 用来构建独立的 kb-mcp.exe（MCP Server sidecar）。
+# 主 package（knowledge_base）仍然是 root member，原有 cargo build 行为不变。
+# kb-mcp 完全独立、不依赖主包，避免被 cdylib + tauri 牵扯，编译出独立 binary。
+[workspace]
+members = ["mcp"]
+
 [package]
 name = "knowledge_base"
 version = "1.6.0"
