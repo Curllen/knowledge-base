@@ -7,6 +7,11 @@ use tokio::sync::{watch, Notify};
 use crate::database::Database;
 use crate::services::vault::VaultState;
 
+/// In-memory MCP client：通过 tokio::io::duplex 与同进程内的 KbServer 通信。
+/// 让主应用代码也能用统一的 MCP 协议消费 12 工具，而不是直接调 services::*。
+/// 使用 RoleClient 角色，handler 用 () 表示不响应 server-initiated 请求。
+pub type InternalMcpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>;
+
 /// 应用全局状态，通过 tauri::State 注入到 Command 中
 pub struct AppState {
     pub db: Database,
@@ -28,6 +33,9 @@ pub struct AppState {
     pub pending_open_md_path: Mutex<Option<String>>,
     /// T-007 笔记加密保险库：内存中的主密钥（可选），锁定时清空
     pub vault: RwLock<VaultState>,
+    /// In-memory MCP client（指向同进程内的 KbServer）。
+    /// `Option` 是因为初始化失败不应阻断主应用启动 —— None 时 mcp_internal_* 命令会报"未就绪"。
+    pub mcp_internal: Option<Arc<InternalMcpClient>>,
     /// 实例锁文件句柄（保持存活以维持独占锁，进程退出时自动释放）
     _lock_file: Option<File>,
 }
@@ -37,6 +45,7 @@ impl AppState {
         db: Database,
         data_dir: PathBuf,
         instance_id: Option<u32>,
+        mcp_internal: Option<Arc<InternalMcpClient>>,
         lock_file: Option<File>,
     ) -> Self {
         Self {
@@ -48,6 +57,7 @@ impl AppState {
             reminder_notify: Arc::new(Notify::new()),
             pending_open_md_path: Mutex::new(None),
             vault: RwLock::new(VaultState::default()),
+            mcp_internal,
             _lock_file: lock_file,
         }
     }

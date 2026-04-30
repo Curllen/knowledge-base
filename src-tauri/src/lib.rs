@@ -36,6 +36,57 @@ fn extract_md_paths_from_args<I: IntoIterator<Item = String>>(args: I) -> Vec<St
         .collect()
 }
 
+/// 在 Tauri 主进程内启动一份 in-memory MCP server (kb-core)，返回 client 端。
+///
+/// 架构：
+/// ```text
+///   主应用 setup
+///       ├── tokio::io::duplex(64KB) → (server_io, client_io)
+///       ├── tokio::spawn KbServer::serve(server_io)   [后台 task 永驻]
+///       └── ().serve(client_io).await               [拿 client]
+///                  ↓
+///            存到 AppState.mcp_internal
+/// ```
+///
+/// 主应用和 sidecar 各自独立打开 SQLite Connection，WAL + busy_timeout 保证并发安全。
+/// `writable=true`：自家应用本身就有完整写权限，写工具默认开启。
+fn setup_internal_mcp(
+    db_path: &Path,
+) -> Result<std::sync::Arc<state::InternalMcpClient>, Box<dyn std::error::Error + Send + Sync>> {
+    use rmcp::ServiceExt;
+
+    let db_path = db_path.to_path_buf();
+
+    // setup 闭包不在 tokio runtime 上下文里，用 tauri::async_runtime::block_on 同步等待
+    tauri::async_runtime::block_on(async move {
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+
+        let kb_db = kb_core::KbDb::open(&db_path, /* writable */ true)
+            .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
+        let kb_server = kb_core::KbServer::new(kb_db, /* writable */ true);
+
+        // 后台 task：跑 server，永远不退出（除非 client 断开）
+        tauri::async_runtime::spawn(async move {
+            match kb_server.serve(server_io).await {
+                Ok(running) => {
+                    if let Err(e) = running.waiting().await {
+                        log::warn!("[mcp-internal] server waiting error: {e}");
+                    }
+                }
+                Err(e) => log::error!("[mcp-internal] server start failed: {e}"),
+            }
+        });
+
+        // client 端用 () handler（不响应 server-initiated 请求）
+        let client = ()
+            .serve(client_io)
+            .await
+            .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
+
+        Ok(std::sync::Arc::new(client))
+    })
+}
+
 /// 解析命令行 `--instance N` 或 `--instance=N`
 fn parse_instance_arg() -> Option<u32> {
     let args: Vec<String> = std::env::args().collect();
@@ -540,8 +591,31 @@ pub fn run() {
                 log::info!("[asset_scope] 已允许 asset 协议读取: {}", instance_dir.display());
             }
 
+            // ─── 启动 in-memory MCP server（kb-core）─────────────
+            // tokio::io::duplex 当 transport，KbServer 跑在后台 task，
+            // client 端存到 AppState 供 commands::mcp::* 用。
+            // 失败不阻断启动 —— 用 Option 包装，commands 拿不到时报"未就绪"
+            let mcp_internal = setup_internal_mcp(&db_path).map_or_else(
+                |e| {
+                    log::warn!(
+                        "[mcp-internal] 初始化失败，自家 AI 对话页将无法用 MCP 内置工具: {e}"
+                    );
+                    None
+                },
+                |c| {
+                    log::info!("[mcp-internal] in-memory MCP server 就绪（kb-core 12 工具）");
+                    Some(c)
+                },
+            );
+
             // 注册全局状态
-            let state = AppState::new(db, instance_dir.clone(), instance_id, lock_file);
+            let state = AppState::new(
+                db,
+                instance_dir.clone(),
+                instance_id,
+                mcp_internal,
+                lock_file,
+            );
 
             // 若由"双击 md 文件"启动，暂存路径到 state，
             // 等前端 mount 完成后通过 take_pending_open_md_path 取走并打开
@@ -659,6 +733,9 @@ pub fn run() {
         })
         // ─── Command 注册 ───────────────────────────
         .invoke_handler(tauri::generate_handler![
+            // MCP 内置 server（kb-core 12 工具）
+            commands::mcp::mcp_internal_list_tools,
+            commands::mcp::mcp_internal_call_tool,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,

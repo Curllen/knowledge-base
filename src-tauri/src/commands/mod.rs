@@ -5,6 +5,7 @@ pub mod daily;
 pub mod data_dir;
 pub mod folders;
 pub mod links;
+pub mod mcp;
 pub mod notes;
 pub mod search;
 pub mod shortcut;
