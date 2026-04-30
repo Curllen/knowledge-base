@@ -15,6 +15,7 @@ const BILIBILI_URL = "https://space.bilibili.com/520725002";
 const BILIBILI_TUTORIAL_URL = "https://www.bilibili.com/video/BV1xvosBREbr";
 const ZSXQ_NAME = "后端转AI实战派";
 const ZSXQ_ID = "91839984";
+const QQ_GROUP_ID = "1090770702";
 
 const { Title, Text } = Typography;
 
@@ -25,6 +26,7 @@ const { Title, Text } = Typography;
 const ABOUT_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "about-system", label: "系统信息" },
   { id: "about-community", label: "作者 & 社区" },
+  { id: "about-sponsor", label: "赞赏支持" },
   { id: "about-migration", label: "数据迁移说明" },
   { id: "about-recommend", label: "推荐应用" },
 ];
@@ -226,7 +228,50 @@ export default function AboutPage() {
               </Text>
             </div>
           </Descriptions.Item>
+          <Descriptions.Item label="QQ 交流群">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Text style={{ fontSize: 13 }}>群号</Text>
+              <Text copyable={{ text: QQ_GROUP_ID }} strong style={{ fontSize: 13 }}>
+                {QQ_GROUP_ID}
+              </Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                （Bug 反馈 / 使用交流 / 新功能讨论）
+              </Text>
+            </div>
+          </Descriptions.Item>
         </Descriptions>
+      </Card>
+
+      {/* 赞赏支持：本应用完全开源免费，扫码请作者喝杯咖啡 ☕ */}
+      <Card id="about-sponsor" title="赞赏支持">
+        <div className="flex items-center gap-6 flex-wrap">
+          <img
+            src="/donate-qr.png"
+            alt="赞赏码"
+            style={{
+              width: 200,
+              height: 200,
+              objectFit: "contain",
+              borderRadius: 8,
+              background: "#fff",
+              padding: 4,
+              border: "1px solid #f0f0f0",
+            }}
+          />
+          <div className="flex-1 min-w-[200px]">
+            <Title level={5} style={{ marginTop: 0 }}>
+              如果这款工具帮到了你 ❤️
+            </Title>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
+              本应用完全开源免费、无任何会员/订阅。如果觉得对你有用，欢迎扫描左侧
+              微信赞赏码请作者喝杯咖啡 ☕，能让我有更多动力继续投入。
+            </Typography.Paragraph>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+              💡 不想赞赏也欢迎：在 B 站点个关注 / 在 GitHub 给项目点 Star /
+              把它推荐给身边需要的朋友。
+            </Typography.Paragraph>
+          </div>
+        </div>
       </Card>
 
       {info && (
