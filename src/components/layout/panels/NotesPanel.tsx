@@ -758,8 +758,43 @@ export function NotesPanel() {
         return;
       }
 
-      // 同 folder + 落在另一个笔记叶子上/旁 → 重排该 folder 内笔记顺序
-      if (dropNoteId == null || dropNoteId === noteId) return;
+      // 同 folder + dropNode 是文件夹（不是笔记叶子）
+      // → 用户视觉是"拖到笔记列表头部上方的 gap"（子文件夹在前、笔记在后）
+      // → 把 dragNote 插到笔记列表最前
+      if (dropNoteId == null) {
+        const siblings: Note[] =
+          targetFolderId == null
+            ? uncategorizedNotes
+            : (notesByFolder.get(targetFolderId) ?? []);
+        const withoutDrag = siblings.filter((n) => n.id !== noteId);
+        const newOrder = [note, ...withoutDrag];
+        // 乐观更新
+        if (targetFolderId == null) {
+          setUncategorizedNotes(newOrder);
+        } else {
+          setNotesByFolder((prev) => {
+            const next = new Map(prev);
+            next.set(targetFolderId!, newOrder);
+            return next;
+          });
+        }
+        try {
+          await noteApi.reorder(newOrder.map((n) => n.id));
+          if (targetFolderId == null) {
+            loadingUncategorizedRef.current = false;
+            void loadUncategorizedNotes();
+          } else {
+            loadingNotesRef.current.delete(targetFolderId);
+            void loadNotesForFolder(targetFolderId);
+          }
+          useAppStore.getState().bumpNotesRefresh();
+        } catch (e) {
+          message.error(String(e));
+        }
+        return;
+      }
+      // 同 folder + 落在另一笔记叶子上/旁 → 计算精确插入位置
+      if (dropNoteId === noteId) return;
       const dropNote = findNoteById(dropNoteId);
       if (!dropNote) return;
       // 同档校验：list_notes 第一排序键是 is_pinned DESC，置顶笔记永远在前。
@@ -786,10 +821,22 @@ export function NotesPanel() {
       const insertIdx = dropOffset > 0 ? dropIdx + 1 : dropIdx;
       const newOrder = [...withoutDrag];
       newOrder.splice(insertIdx, 0, note);
+      // 乐观更新：立刻把缓存换成 newOrder，让用户立即看到拖排结果（无后端往返延迟）
+      if (targetFolderId == null) {
+        setUncategorizedNotes(newOrder);
+      } else {
+        setNotesByFolder((prev) => {
+          const next = new Map(prev);
+          next.set(targetFolderId!, newOrder);
+          return next;
+        });
+      }
       try {
         await noteApi.reorder(newOrder.map((n) => n.id));
-        // 重载该 folder 笔记缓存以反映新顺序（list_notes 默认按时间序，所以肉眼
-        // 看不到差异；切到列表页"自定义排序"模式才能看见）
+        useAppStore.getState().bumpNotesRefresh();
+      } catch (e) {
+        message.error(String(e));
+        // 失败回滚：重拉
         if (targetFolderId == null) {
           loadingUncategorizedRef.current = false;
           void loadUncategorizedNotes();
@@ -797,9 +844,6 @@ export function NotesPanel() {
           loadingNotesRef.current.delete(targetFolderId);
           void loadNotesForFolder(targetFolderId);
         }
-        useAppStore.getState().bumpNotesRefresh();
-      } catch (e) {
-        message.error(String(e));
       }
       return;
     }
