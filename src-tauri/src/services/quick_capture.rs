@@ -165,6 +165,63 @@ pub fn preserve_plain_text_indent(text: &str) -> String {
         .join("\n")
 }
 
+/// `.md` 导入专用：把行首空格转成 NBSP 保留视觉缩进，但跳过 fenced code block。
+///
+/// 与 `preserve_plain_text_indent` 区别：
+/// - 该函数感知 ``` 围栏，fence 内的行原样保留（避免破坏代码块里的真实空格）
+/// - 不做列表标记合并（merge_orphan_list_markers），避免破坏合法 markdown 列表
+///
+/// 适用场景：用户从某处复制带缩进的内容（YAML / 树状目录 / Python 代码）到 .md
+/// 文件但没用 ``` 包围。markdown 标准会 trim 段内行首空格，导致缩进丢失。
+/// 此函数把这类行首空格转成 NBSP，让缩进在编辑器里仍然可见，**同时保留真正的
+/// fenced code block 不动**（那里行首空格本来就有意义，markdown 解析器也不动）。
+pub fn preserve_md_indent_outside_fence(text: &str) -> String {
+    let mut out: Vec<String> = Vec::with_capacity(text.lines().count() + 1);
+    let mut in_fence = false;
+    for line in text.split('\n') {
+        let trimmed_start = line.trim_start();
+        // 围栏判定：行首 ``` 或 ~~~（允许后跟语言标识）；与 markdown-it 的 fence 规则一致
+        let is_fence_marker = trimmed_start.starts_with("```")
+            || trimmed_start.starts_with("~~~");
+        if is_fence_marker {
+            // 切换 fence 状态；当前行原样保留（不动行首）
+            in_fence = !in_fence;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_fence {
+            // fence 内的所有行原样保留（保护代码块的真实空格）
+            out.push(line.to_string());
+            continue;
+        }
+        // fence 外的行：行首 ASCII 空格 / Tab → NBSP，保留视觉缩进
+        let chars: Vec<char> = line.chars().collect();
+        let mut prefix_len = 0;
+        while prefix_len < chars.len()
+            && (chars[prefix_len] == ' ' || chars[prefix_len] == '\t')
+        {
+            prefix_len += 1;
+        }
+        if prefix_len == 0 {
+            out.push(line.to_string());
+            continue;
+        }
+        let mut new_line = String::with_capacity(line.len() + prefix_len * 2);
+        for &c in &chars[..prefix_len] {
+            match c {
+                ' ' => new_line.push('\u{00A0}'),
+                '\t' => new_line.push_str("\u{00A0}\u{00A0}\u{00A0}\u{00A0}"),
+                _ => unreachable!(),
+            }
+        }
+        for &c in &chars[prefix_len..] {
+            new_line.push(c);
+        }
+        out.push(new_line);
+    }
+    out.join("\n")
+}
+
 /// 标题 = 时间戳 + 首句（≤30 字）；首句拿不到时仅时间戳
 fn build_title(text: &str) -> String {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M").to_string();
