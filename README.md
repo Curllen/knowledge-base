@@ -55,3 +55,27 @@ pnpm tauri build
 - ✨ [功能建议](../../issues/new?template=feature_request.md)
 - 🔨 [提交 Pull Request](../../compare)
 - 💼 [商业授权咨询](COMMERCIAL-LICENSE.md)
+
+## 社区交流
+
+| 渠道 | 入口 |
+|------|------|
+| QQ 交流群（Bug 反馈 / 使用交流 / 新功能讨论） | 群号 `1090770702` |
+| B 站作者主页（教程视频 / 功能演示） | <https://space.bilibili.com/520725002> |
+| 知识星球（后端转 AI 实战派） | 星球号 `91839984` |
+| 应用文档站点 | <https://kb.ruoyi.plus/> |
+
+## 赞赏支持 ☕
+
+本项目完全开源、免费、无任何会员或订阅。如果它帮到了你，欢迎扫描下面微信赞赏码请作者喝杯咖啡：
+
+<p align="center">
+  <img src="public/donate-qr.png" alt="微信赞赏码" width="240" />
+</p>
+
+不想赞赏也完全没问题，下面这些事一样能帮到作者：
+
+- ⭐ 在 [GitHub](https://github.com/bkywksj/knowledge-base) / [Gitee](https://gitee.com/bkywksj/knowledge-base) 给项目点 Star
+- 🎬 在 B 站关注作者主页
+- 📣 推荐给身边需要的朋友
+- 📋 提 Issue 反馈 Bug / 功能建议
