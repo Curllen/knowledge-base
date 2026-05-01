@@ -471,6 +471,9 @@ pub async fn mcp_external_call_tool(
 pub enum InstallTarget {
     ClaudeDesktop,
     Cursor,
+    /// Claude Code (CLI)，写到 ~/.claude.json（与 tauri-cc 同一文件）。
+    /// 支持 CLAUDE_CONFIG_DIR 环境变量覆盖（多实例模式）
+    ClaudeCode,
 }
 
 /// 一键安装结果
@@ -508,6 +511,8 @@ pub fn mcp_install_to_client(
             .ok_or_else(|| "无法定位 Claude Desktop 配置目录".to_string())?,
         InstallTarget::Cursor => locate_cursor_config()
             .ok_or_else(|| "无法定位 Cursor 配置目录".to_string())?,
+        InstallTarget::ClaudeCode => locate_claude_code_config()
+            .ok_or_else(|| "无法定位 Claude Code (CLI) 配置文件 ~/.claude.json".to_string())?,
     };
 
     // 父目录不存在则创建
@@ -614,6 +619,19 @@ fn locate_claude_desktop_config() -> Option<PathBuf> {
     }
 }
 
+/// Claude Code (CLI) 配置文件 = ~/.claude.json（与 tauri-cc 写的是同一个文件）。
+/// 优先 CLAUDE_CONFIG_DIR 环境变量（多实例模式），否则默认 ~/.claude.json。
+/// 三平台都按 $HOME 拼路径，Windows 下 USERPROFILE 兜底。
+fn locate_claude_code_config() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(dir).join(".claude.json"));
+    }
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())?;
+    Some(PathBuf::from(home).join(".claude.json"))
+}
+
 fn locate_cursor_config() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -644,6 +662,8 @@ pub fn mcp_uninstall_from_client(target: InstallTarget) -> Result<UninstallResul
             .ok_or_else(|| "无法定位 Claude Desktop 配置目录".to_string())?,
         InstallTarget::Cursor => locate_cursor_config()
             .ok_or_else(|| "无法定位 Cursor 配置目录".to_string())?,
+        InstallTarget::ClaudeCode => locate_claude_code_config()
+            .ok_or_else(|| "无法定位 Claude Code (CLI) 配置文件 ~/.claude.json".to_string())?,
     };
 
     if !config_path.exists() {
@@ -695,6 +715,8 @@ pub fn mcp_check_install_status(target: InstallTarget) -> Result<ClientInstallSt
             .ok_or_else(|| "无法定位 Claude Desktop 配置目录".to_string())?,
         InstallTarget::Cursor => locate_cursor_config()
             .ok_or_else(|| "无法定位 Cursor 配置目录".to_string())?,
+        InstallTarget::ClaudeCode => locate_claude_code_config()
+            .ok_or_else(|| "无法定位 Claude Code (CLI) 配置文件 ~/.claude.json".to_string())?,
     };
 
     let config_path_str = config_path.to_string_lossy().into_owned();

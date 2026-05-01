@@ -41,7 +41,7 @@ interface ClaudeCodeTemplate {
   settingsSnippetWritable: string;
 }
 
-type InstallTarget = "claudedesktop" | "cursor";
+type InstallTarget = "claudedesktop" | "cursor" | "claudecode";
 
 interface InstallResult {
   configPath: string;
@@ -450,6 +450,7 @@ export function MCPServerSection() {
                         onCopy={copyConfig}
                         onSaveAs={() => void saveClaudeMdAs()}
                         onOpenClaudeDir={() => void openClaudeDir()}
+                        onInstall={handleInstall}
                       />
                     ) : (
                       <Empty description="模板未加载" />
@@ -877,9 +878,10 @@ interface ClaudeCodeBlockProps {
   onCopy: (text: string, label: string) => void;
   onSaveAs: () => void;
   onOpenClaudeDir: () => void;
+  onInstall: (target: InstallTarget, writable: boolean, label: string) => void;
 }
 
-function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir }: ClaudeCodeBlockProps) {
+function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir, onInstall }: ClaudeCodeBlockProps) {
   return (
     <div className="space-y-3">
       <Alert
@@ -893,8 +895,9 @@ function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir }: ClaudeCodeB
               告诉 Claude 怎么用知识库工具
             </li>
             <li>
-              <code>settings.json</code> 片段合并到 <code>~/.claude/settings.json</code>
-              （或项目级 <code>.claude/settings.json</code>），让 Claude 真有工具能力
+              <strong>「一键安装到 Claude Code」</strong>会把 mcpServers 自动写到{" "}
+              <code>~/.claude.json</code>（与 tauri-cc 同一份文件，merge 不覆盖其它 server）；
+              不想自动写也可以复制下方 JSON 自己改
             </li>
             <li>
               在某个项目目录里跑 <code>claude</code>，对话里说「找一下我笔记里关于 X」试试
@@ -959,6 +962,8 @@ function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir }: ClaudeCodeB
                   label="settings.json 只读"
                   hint="LLM 只能搜不能改你的笔记。安全默认。"
                   onCopy={onCopy}
+                  installer={{ target: "claudecode", writable: false, clientLabel: "Claude Code" }}
+                  onInstall={onInstall}
                 />
               ),
             },
@@ -971,6 +976,8 @@ function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir }: ClaudeCodeB
                   label="settings.json 可写"
                   hint="加 --writable 后 Claude 能 create_note / update_note / add_tag_to_note。慎用。"
                   onCopy={onCopy}
+                  installer={{ target: "claudecode", writable: true, clientLabel: "Claude Code" }}
+                  onInstall={onInstall}
                 />
               ),
             },
@@ -986,9 +993,11 @@ interface SnippetBlockProps {
   label: string;
   hint: string;
   onCopy: (text: string, label: string) => void;
+  installer?: { target: InstallTarget; writable: boolean; clientLabel: string };
+  onInstall?: (target: InstallTarget, writable: boolean, label: string) => void;
 }
 
-function SnippetBlock({ json, label, hint, onCopy }: SnippetBlockProps) {
+function SnippetBlock({ json, label, hint, onCopy, installer, onInstall }: SnippetBlockProps) {
   return (
     <div>
       <Alert type="warning" showIcon message={hint} className="mb-2" />
@@ -1006,9 +1015,20 @@ function SnippetBlock({ json, label, hint, onCopy }: SnippetBlockProps) {
         {json}
       </pre>
       <div className="mt-2 text-right">
-        <Button size="small" icon={<CopyOutlined />} onClick={() => onCopy(json, label)}>
-          复制 JSON
-        </Button>
+        <Space>
+          {installer && onInstall && (
+            <Button
+              type="primary"
+              size="small"
+              onClick={() => onInstall(installer.target, installer.writable, installer.clientLabel)}
+            >
+              ⚡ 一键安装到 {installer.clientLabel}（写 ~/.claude.json）
+            </Button>
+          )}
+          <Button size="small" icon={<CopyOutlined />} onClick={() => onCopy(json, label)}>
+            复制 JSON
+          </Button>
+        </Space>
       </div>
     </div>
   );
