@@ -41,6 +41,14 @@ interface ClaudeCodeTemplate {
   settingsSnippetWritable: string;
 }
 
+type InstallTarget = "claudedesktop" | "cursor";
+
+interface InstallResult {
+  configPath: string;
+  createdNew: boolean;
+  overwritten: boolean;
+}
+
 // 用浏览器原生 clipboard，省一个 npm 依赖；webview 在 https / tauri:// 协议下都允许
 async function writeClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
@@ -154,6 +162,53 @@ export function MCPServerSection() {
       message.success(`已复制 ${label} 配置到剪贴板`);
     } catch (e) {
       message.error(`复制失败: ${e}`);
+    }
+  }
+
+  // 一键安装到客户端配置文件（自动 merge JSON，不覆盖已有 server）
+  async function handleInstall(target: InstallTarget, writable: boolean, label: string) {
+    try {
+      const r = await invoke<InstallResult>("mcp_install_to_client", {
+        target,
+        writable,
+      });
+      Modal.success({
+        title: `已安装到 ${label}`,
+        width: 540,
+        content: (
+          <div className="space-y-2">
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                配置文件路径
+              </Text>
+              <Paragraph
+                copyable={{ text: r.configPath }}
+                style={{ margin: 0, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}
+              >
+                {r.configPath}
+              </Paragraph>
+            </div>
+            <Alert
+              type={r.overwritten ? "warning" : "info"}
+              showIcon
+              message={
+                r.createdNew
+                  ? "已新建配置文件并写入"
+                  : r.overwritten
+                    ? "已覆盖原有的 knowledge-base 配置（其它 MCP server 保留）"
+                    : "已合并到现有配置（其它 MCP server 保留）"
+              }
+            />
+            <Alert
+              type="info"
+              showIcon
+              message={`重启 ${label} 后生效${writable ? "（已开启可写模式，LLM 能修改你的笔记）" : ""}`}
+            />
+          </div>
+        ),
+      });
+    } catch (e) {
+      message.error(`安装失败: ${e}`);
     }
   }
 
@@ -340,7 +395,13 @@ export function MCPServerSection() {
                         json={configs.claudeConfig}
                         label="Claude Desktop 只读"
                         onCopy={copyConfig}
-                        hint="抄到 %APPDATA%\\Claude\\claude_desktop_config.json，重启即可。LLM 只能搜不能改你的笔记。"
+                        onInstall={handleInstall}
+                        installer={{
+                          target: "claudedesktop",
+                          writable: false,
+                          clientLabel: "Claude Desktop",
+                        }}
+                        hint="LLM 只能搜不能改你的笔记。手动方式：抄到 %APPDATA%\\Claude\\claude_desktop_config.json"
                       />
                     ),
                   },
@@ -352,6 +413,12 @@ export function MCPServerSection() {
                         json={configs.claudeWritable}
                         label="Claude Desktop 可写"
                         onCopy={copyConfig}
+                        onInstall={handleInstall}
+                        installer={{
+                          target: "claudedesktop",
+                          writable: true,
+                          clientLabel: "Claude Desktop",
+                        }}
                         hint="加 --writable 后 LLM 能调用 create_note / update_note / add_tag_to_note 修改你的知识库。"
                       />
                     ),
@@ -364,7 +431,13 @@ export function MCPServerSection() {
                         json={configs.cursorConfig}
                         label="Cursor"
                         onCopy={copyConfig}
-                        hint="抄到 ~/.cursor/mcp.json"
+                        onInstall={handleInstall}
+                        installer={{
+                          target: "cursor",
+                          writable: false,
+                          clientLabel: "Cursor",
+                        }}
+                        hint="手动方式：抄到 ~/.cursor/mcp.json"
                       />
                     ),
                   },
@@ -746,11 +819,23 @@ interface ConfigBlockProps {
   label: string;
   hint: string;
   onCopy: (json: string, label: string) => void;
+  /// 提供时显示「一键安装」按钮，自动 merge JSON 到客户端配置文件
+  installer?: { target: InstallTarget; writable: boolean; clientLabel: string };
+  onInstall?: (target: InstallTarget, writable: boolean, label: string) => void;
 }
 
-function ConfigBlock({ json, label, hint, onCopy }: ConfigBlockProps) {
+function ConfigBlock({ json, label, hint, onCopy, installer, onInstall }: ConfigBlockProps) {
   return (
     <div>
+      {installer && onInstall && (
+        <Alert
+          type="success"
+          showIcon
+          message={`点击下方「一键安装」按钮自动 merge 到 ${installer.clientLabel} 配置文件`}
+          description="不会覆盖你已有的其它 MCP server 配置；如已存在 knowledge-base 条目会更新为最新配置"
+          className="mb-2"
+        />
+      )}
       <Alert type="info" showIcon message={hint} className="mb-2" />
       <pre
         style={{
@@ -766,9 +851,20 @@ function ConfigBlock({ json, label, hint, onCopy }: ConfigBlockProps) {
         {json}
       </pre>
       <div className="mt-2 text-right">
-        <Button size="small" icon={<CopyOutlined />} onClick={() => onCopy(json, label)}>
-          复制 JSON
-        </Button>
+        <Space>
+          {installer && onInstall && (
+            <Button
+              type="primary"
+              size="small"
+              onClick={() => onInstall(installer.target, installer.writable, installer.clientLabel)}
+            >
+              ⚡ 一键安装到 {installer.clientLabel}
+            </Button>
+          )}
+          <Button size="small" icon={<CopyOutlined />} onClick={() => onCopy(json, label)}>
+            复制 JSON
+          </Button>
+        </Space>
       </div>
     </div>
   );

@@ -226,6 +226,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-templates", label: "模板管理" },
   { id: "settings-data-dir", label: "数据目录" },
   { id: "settings-sync", label: "同步备份" },
+  { id: "settings-mcp", label: "MCP 服务器" },
   { id: "settings-orphan-assets", label: "孤儿素材清理" },
   { id: "settings-community", label: "作者 & 社区" },
 ];
