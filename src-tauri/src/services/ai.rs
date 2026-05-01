@@ -1339,16 +1339,20 @@ impl AiService {
 
         // 3. 构建消息数组（带 skills 指引的 system prompt + 历史）
         let history = db.list_ai_messages(conversation_id)?;
-        let system_prompt = "你是一个知识库助手。你可以调用以下工具辅助回答：\n\
+        let system_prompt = "你是一个知识库助手。你可以调用以下内置工具辅助回答：\n\
             - search_notes(query, limit?)：搜笔记\n\
             - get_note(id)：读单篇笔记全文\n\
             - list_tags()：列所有标签\n\
             - find_related(note_id)：找相关笔记（反向链接）\n\
             - get_today_tasks()：今日待办\n\
+            \n此外可能有外部 MCP 工具可用（名字以 `mcp__` 开头，描述里有 `[MCP/server名]` 标签）。\
+            这些工具来自用户在「设置 → MCP 服务器」加的第三方服务（如 GitHub / Filesystem / 高德地图 / kb-mcp 自身等）。\
+            描述中 `[MCP/...]` 是工具来源标记，调用时仍按工具名（含 mcp__ 前缀）调用。\n\
             \n原则：\n\
             1. 回答涉及用户笔记内容时，先用 search_notes 搜索，再按需 get_note 读全文；不要凭空编造。\n\
-            2. 工具返回的内容可能有省略（标记 `…（已截断）`），必要时再次调用获取更多。\n\
-            3. 最终给用户的回答用中文，简洁准确。";
+            2. 涉及第三方系统（GitHub 仓库 / 文件系统 / 地图 等）时，优先用对应 MCP 工具。\n\
+            3. 工具返回的内容可能有省略（标记 `…（已截断）`），必要时再次调用获取更多。\n\
+            4. 最终给用户的回答用中文，简洁准确。";
 
         let mut messages: Vec<Value> = vec![json!({
             "role": "system",
@@ -1371,7 +1375,9 @@ impl AiService {
         // 4. tool-use 循环
         let mut all_skill_calls: Vec<SkillCall> = Vec::new();
         let mut final_content = String::new();
-        let tool_schemas = skills::tool_schemas();
+        // M5-3：tool_schemas 现在融合内置 5 skills + 所有 enabled 外部 MCP server 的工具
+        // 工具命名约定：MCP 工具加 mcp__<server_id>__ 前缀；dispatch 时按前缀路由
+        let tool_schemas = skills::tool_schemas_with_mcp(&app).await;
 
         for round in 0..=MAX_TOOL_ROUNDS {
             // 最后一轮不给 tools，强制 AI 给出最终答复（防死循环）
@@ -1452,11 +1458,12 @@ impl AiService {
                     }),
                 );
 
-                // 执行
-                let (result_text, status) = match skills::dispatch(db, &tc.name, &tc.args_json) {
-                    Ok(r) => (r, "ok"),
-                    Err(e) => (format!("ERROR: {}", e), "error"),
-                };
+                // 执行：dispatch_with_mcp 会按前缀路由（mcp__<id>__<name> → mcp_external，否则原 skills）
+                let (result_text, status) =
+                    match skills::dispatch_with_mcp(&app, db, &tc.name, &tc.args_json).await {
+                        Ok(r) => (r, "ok"),
+                        Err(e) => (format!("ERROR: {}", e), "error"),
+                    };
 
                 let sc = SkillCall {
                     id: tc.id.clone(),

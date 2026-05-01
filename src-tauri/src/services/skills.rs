@@ -20,6 +20,9 @@ use serde_json::{json, Value};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::TaskQuery;
+use crate::state::AppState;
+use rmcp::model::CallToolRequestParams;
+use tauri::{AppHandle, Manager};
 
 /// 结果字符串长度上限（按字符计），超过的部分被截断并用 "…（已截断）" 标记
 const SKILL_RESULT_MAX_CHARS: usize = 2000;
@@ -125,6 +128,175 @@ pub fn dispatch(db: &Database, name: &str, args_json: &str) -> Result<String, Ap
         }
     };
     Ok(truncate(&result, SKILL_RESULT_MAX_CHARS))
+}
+
+// ─── MCP 集成（M5-3）：把所有 enabled 外部 MCP server 的工具注入到 ai 对话 ─
+
+/// MCP 工具命名前缀。完整工具名 = `mcp__<server_id>__<tool_name>`。
+/// 用 server_id 而非 name 是因为 OpenAI tool name 规范严格（`^[a-zA-Z0-9_-]{1,64}$`），
+/// server name 可能含中文/空格，避免做 sanitize 转换。
+const MCP_TOOL_PREFIX: &str = "mcp__";
+
+/// 按 OpenAI tools 格式返回所有可用工具：内置 5 skills + 所有 enabled 外部 MCP 工具
+///
+/// 失败的 server（spawn 失败 / 握手失败 / list_tools 失败）只 log warn，
+/// 不阻塞 ai 对话流；用户在设置页应该会看到 server 状态。
+pub async fn tool_schemas_with_mcp(app: &AppHandle) -> Vec<Value> {
+    let mut schemas = tool_schemas(); // 原 5 个内置 skills
+
+    // 取 AppState（chat_stream_with_skills 已经持有 AppHandle）
+    let state = match app.try_state::<AppState>() {
+        Some(s) => s,
+        None => {
+            log::warn!("[ai-mcp] AppState not ready, skipping MCP tools");
+            return schemas;
+        }
+    };
+
+    // 列所有 enabled 外部 MCP server
+    let servers = match state.db.list_mcp_servers() {
+        Ok(list) => list.into_iter().filter(|s| s.enabled).collect::<Vec<_>>(),
+        Err(e) => {
+            log::warn!("[ai-mcp] list_mcp_servers 失败: {e}");
+            return schemas;
+        }
+    };
+
+    for server in servers {
+        let client = match state.mcp_external.get_or_spawn(&server).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!(
+                    "[ai-mcp] spawn server '{}' (id={}) 失败: {}; skip",
+                    server.name,
+                    server.id,
+                    e
+                );
+                continue;
+            }
+        };
+        let tools = match client.list_all_tools().await {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!(
+                    "[ai-mcp] list_tools '{}' (id={}) 失败: {}; skip",
+                    server.name,
+                    server.id,
+                    e
+                );
+                continue;
+            }
+        };
+
+        for t in tools {
+            let prefixed_name = format!(
+                "{}{}__{}",
+                MCP_TOOL_PREFIX,
+                server.id,
+                t.name.as_ref()
+            );
+            // OpenAI tool name 规范：64 字符 + 限定字符。截断保险一下
+            let safe_name = if prefixed_name.len() > 64 {
+                prefixed_name.chars().take(64).collect::<String>()
+            } else {
+                prefixed_name
+            };
+            let desc = format!(
+                "[MCP/{}] {}",
+                server.name,
+                t.description.as_deref().unwrap_or("(无说明)")
+            );
+            schemas.push(json!({
+                "type": "function",
+                "function": {
+                    "name": safe_name,
+                    "description": desc,
+                    "parameters": *t.input_schema,
+                }
+            }));
+        }
+    }
+
+    schemas
+}
+
+/// dispatch 增强版：按工具名前缀路由
+/// - `mcp__<id>__<name>` 走 mcp_external client
+/// - 其他名字走原 dispatch（5 个内置 skills）
+pub async fn dispatch_with_mcp(
+    app: &AppHandle,
+    db: &Database,
+    name: &str,
+    args_json: &str,
+) -> Result<String, AppError> {
+    if let Some(suffix) = name.strip_prefix(MCP_TOOL_PREFIX) {
+        // 拆 <id>__<tool>
+        let (id_str, tool_name) = suffix.split_once("__").ok_or_else(|| {
+            AppError::Custom(format!("MCP 工具名格式错误: {}（应为 mcp__<id>__<name>）", name))
+        })?;
+        let server_id: i64 = id_str
+            .parse()
+            .map_err(|_| AppError::Custom(format!("MCP 工具 server_id 解析失败: {}", id_str)))?;
+        return dispatch_mcp(app, server_id, tool_name, args_json).await;
+    }
+    // 原 5 个内置 skills 走 sync 版
+    dispatch(db, name, args_json)
+}
+
+async fn dispatch_mcp(
+    app: &AppHandle,
+    server_id: i64,
+    tool_name: &str,
+    args_json: &str,
+) -> Result<String, AppError> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| AppError::Custom("AppState 未就绪".into()))?;
+
+    let server = state
+        .db
+        .get_mcp_server(server_id)?
+        .ok_or_else(|| AppError::Custom(format!("MCP server {} 不存在", server_id)))?;
+
+    let client = state
+        .mcp_external
+        .get_or_spawn(&server)
+        .await
+        .map_err(|e| AppError::Custom(format!("spawn MCP server 失败: {e}")))?;
+
+    // 解析 args_json 为 JsonObject（rmcp call_tool 要求 Map<String, Value>）
+    let args_value: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
+    let args_object = match args_value {
+        Value::Object(m) => Some(m),
+        Value::Null => None,
+        other => {
+            return Err(AppError::Custom(format!(
+                "MCP 工具参数应为 JSON object，收到: {}",
+                other
+            )));
+        }
+    };
+
+    let mut req = CallToolRequestParams::new(tool_name.to_string());
+    if let Some(obj) = args_object {
+        req = req.with_arguments(obj);
+    }
+
+    let result = client
+        .call_tool(req)
+        .await
+        .map_err(|e| AppError::Custom(format!("call_tool({tool_name}) 失败: {e}")))?;
+
+    let mut out = String::new();
+    for c in &result.content {
+        if let Some(text) = c.as_text() {
+            out.push_str(&text.text);
+        }
+    }
+    if result.is_error.unwrap_or(false) {
+        return Err(AppError::Custom(format!("MCP 工具返回错误: {out}")));
+    }
+    Ok(truncate(&out, SKILL_RESULT_MAX_CHARS))
 }
 
 // ─── 各 skill 实现 ────────────────────────────
