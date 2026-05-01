@@ -1331,3 +1331,50 @@ pub struct SyncPullResult {
 }
 
 
+
+// ─── M5-2: 外部 MCP server 注册表 ─────────────────────────────────
+
+/// 用户在「设置 → MCP 服务器」里添加的一个外部 MCP server。
+/// 主应用通过 services::mcp_client::McpClientManager spawn 子进程并维持 client。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServer {
+    pub id: i64,
+    /// 用户取的别名（如 "github" / "高德地图"），唯一
+    pub name: String,
+    /// 传输方式："stdio"（v1 仅此一种）
+    pub transport: String,
+    /// 可执行文件路径或命令名
+    pub command: String,
+    /// 命令行参数（前端传 string[]，后端用 JSON 串持久化）
+    pub args: Vec<String>,
+    /// 环境变量（前端传 Record<string, string>）
+    pub env: std::collections::HashMap<String, String>,
+    /// 启用 / 禁用
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 创建/更新 server 时前端传入的 payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerInput {
+    pub name: String,
+    #[serde(default = "default_transport")]
+    pub transport: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_transport() -> String {
+    "stdio".into()
+}
+fn default_enabled() -> bool {
+    true
+}

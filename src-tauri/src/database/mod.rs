@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod mcp_servers;
 pub mod folders;
 pub mod links;
 pub mod notes;

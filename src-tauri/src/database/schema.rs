@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 32;
+pub const SCHEMA_VERSION: i32 = 33;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -62,6 +62,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             29 => migrate_v29_to_v30(conn)?,
             30 => migrate_v30_to_v31(conn)?,
             31 => migrate_v31_to_v32(conn)?,
+            32 => migrate_v32_to_v33(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -1332,5 +1333,38 @@ fn migrate_v31_to_v32(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 32)?;
+    Ok(())
+}
+
+/// v32 -> v33: 外部 MCP server 注册表（M5-2）
+///
+/// 让用户可以在主应用里加任意 MCP server（GitHub / Filesystem / 高德地图…），
+/// 自家 AI 对话页通过 services::mcp_client::McpClientManager 统一调用。
+///
+/// 字段说明：
+/// - transport: 目前只支持 "stdio"（streamable-http 留给后续）
+/// - command: 可执行文件路径或命令名（如 "npx" / 绝对路径）
+/// - args: JSON array of strings，命令行参数
+/// - env: JSON object，环境变量（OAuth token 等敏感配置走这里）
+/// - enabled: 0/1，禁用时不会被 spawn
+fn migrate_v32_to_v33(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v32 -> v33 (mcp_servers 外部 MCP 注册表)");
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mcp_servers (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            transport   TEXT NOT NULL DEFAULT 'stdio',
+            command     TEXT NOT NULL,
+            args        TEXT NOT NULL DEFAULT '[]',
+            env         TEXT NOT NULL DEFAULT '{}',
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled);",
+    )?;
+
+    set_version(conn, 33)?;
     Ok(())
 }
