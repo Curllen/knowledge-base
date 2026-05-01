@@ -137,3 +137,63 @@ bash src-tauri/mcp/test-handshake.sh
 ### 性能怎么样
 
 stdio + 直连 SQLite，单次 search_notes 在 1 万条笔记规模下 < 50ms。FTS5 索引由主应用维护，sidecar 直接复用。
+
+---
+
+## macOS 平台注意事项
+
+代码本身跨平台，但有几个 macOS 特有的配置坑要知道：
+
+### 1. GUI App spawn `npx` 找不到（最常见）
+
+**症状**：在设置页加 GitHub MCP server，配 `command: "npx"`，点「列出工具」报 `spawn npx 失败: No such file or directory`。
+
+**原因**：macOS GUI app 启动时 PATH 是 `/usr/bin:/bin:/usr/sbin:/sbin`，**不读 `~/.zshrc` 里 nvm/brew 的 PATH**。从 Terminal 跑 `which npx` 能找到不代表 GUI app 也找得到。
+
+**对策（任选其一）**：
+- ✅ **推荐**：用绝对路径。终端 `which npx` 拿到全路径，比如 `/Users/you/.nvm/versions/node/v22.0.0/bin/npx`，填到 `command`
+- 把 npm 装到系统级位置 `/usr/local/bin`（用 `brew install node` 而不是 nvm）
+- 启动 app 时手动加 PATH：`PATH=$PATH:/Users/you/.nvm/.../bin /Applications/知识库.app/Contents/MacOS/KnowledgeBase`
+
+### 2. .app Bundle 里 sidecar 的位置
+
+打包后 `kb-mcp` binary 自动放进 `知识库.app/Contents/MacOS/` 与主可执行文件同目录。设置页「Sidecar binary」字段会显示这个路径。
+
+### 3. Code Signing & Gatekeeper
+
+`pnpm tauri build` 默认会用 ad-hoc 签名签 sidecar。第一次跑时如果触发 Gatekeeper：
+- 系统设置 → 隐私与安全性 → 「仍要打开」
+- 或终端 `xattr -dr com.apple.quarantine /Applications/知识库.app` 一次性移除隔离属性
+
+需要 Apple Developer ID 签名的话，配 `signingIdentity` 到 `tauri.conf.json` macOS bundle。
+
+### 4. 路径含空格无须转义
+
+macOS db 路径形如 `/Users/you/Library/Application Support/com.agilefr.kb/app.db`（含空格）。MCP client 配置 JSON 的 `args: ["--db-path", "<上面的路径>"]` 是数组，每个元素一个 arg，不会按空格切分。不用 quote、不用转义。
+
+### 5. Sidecar binary 可执行权限
+
+`pnpm build:mcp` 用 Node `copyFileSync` 复制，**保留 +x 位**（POSIX 系统）。`cargo build` 出来的产物本身就是 +x。如果手动 mv/cp 后丢了权限，`chmod +x kb-mcp` 修复。
+
+---
+
+## Linux 平台
+
+行为基本同 macOS：
+- 安装包 `.deb` / `.AppImage` 都会带上 sidecar
+- spawn `npx` 同样有 GUI 启动 PATH 问题（systemd / 桌面环境的 PATH 配置不同），同样建议用绝对路径
+- 不需要 code signing
+
+---
+
+## 调试：用 MCP Inspector 测 sidecar
+
+官方 Inspector 是个 web GUI，能可视化看到所有 tools/prompts/resources：
+
+```bash
+npx @modelcontextprotocol/inspector \
+  /path/to/kb-mcp \
+  --db-path /path/to/app.db
+```
+
+浏览器里能直接调用工具看返回，比手动构造 JSON-RPC 方便很多。

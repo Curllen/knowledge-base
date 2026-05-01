@@ -29,7 +29,7 @@ import {
 } from "@ant-design/icons";
 import { ExternalLink, Folder, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { McpServer, McpServerInput } from "@/types";
 
 // 用浏览器原生 clipboard，省一个 npm 依赖；webview 在 https / tauri:// 协议下都允许
@@ -390,9 +390,9 @@ export function MCPServerSection() {
               size="small"
               icon={<ExternalLink size={12} />}
               onClick={() =>
-                void invoke("greet", { name: "noop" }).catch(() => {
-                  /* 占位，未来可接 docs */
-                })
+                void openUrl(
+                  "https://gitee.com/bkywksj/knowledge-base/blob/master/docs/mcp-setup.md",
+                ).catch((e) => message.error(`打开文档失败: ${e}`))
               }
             >
               详细文档：docs/mcp-setup.md
