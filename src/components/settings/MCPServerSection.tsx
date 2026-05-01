@@ -12,11 +12,25 @@ import {
   Tooltip,
   List,
   Empty,
+  Table,
+  Switch,
+  Modal,
+  Form,
+  Input,
+  Popconfirm,
+  Divider,
 } from "antd";
-import { CheckCircleFilled, CloseCircleFilled, CopyOutlined, PlayCircleOutlined } from "@ant-design/icons";
-import { ExternalLink, Folder } from "lucide-react";
+import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  CopyOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
+import { ExternalLink, Folder, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import type { McpServer, McpServerInput } from "@/types";
 
 // 用浏览器原生 clipboard，省一个 npm 依赖；webview 在 https / tauri:// 协议下都允许
 async function writeClipboard(text: string): Promise<void> {
@@ -361,6 +375,14 @@ export function MCPServerSection() {
             ]}
           />
 
+          <Divider style={{ margin: "16px 0" }} />
+
+          {/* ─── 外部 MCP servers（用户加的 GitHub / Filesystem / 等） ─── */}
+          <ExternalServersSubsection
+            sidecarBinaryPath={info.sidecarBinaryPath}
+            dbPath={info.dbPath}
+          />
+
           {/* ─── 文档链接 ─────────────────────────────── */}
           <div className="mt-4 text-right">
             <Button
@@ -379,6 +401,289 @@ export function MCPServerSection() {
         </>
       )}
     </Card>
+  );
+}
+
+// ─── 外部 MCP servers 子区域 ─────────────────────────────────────
+
+interface ExternalServersSubsectionProps {
+  sidecarBinaryPath: string | null;
+  dbPath: string;
+}
+
+function ExternalServersSubsection({ sidecarBinaryPath, dbPath }: ExternalServersSubsectionProps) {
+  const [servers, setServers] = useState<McpServer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form] = Form.useForm<McpServerInput & { argsText: string; envText: string }>();
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const list = await invoke<McpServer[]>("mcp_list_servers");
+      setServers(list);
+    } catch (e) {
+      message.error(`加载外部 MCP server 列表失败: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openCreate() {
+    setEditingId(null);
+    form.resetFields();
+    form.setFieldsValue({ enabled: true, argsText: "[]", envText: "{}" });
+    setModalOpen(true);
+  }
+
+  function openEdit(s: McpServer) {
+    setEditingId(s.id);
+    form.setFieldsValue({
+      name: s.name,
+      command: s.command,
+      enabled: s.enabled,
+      argsText: JSON.stringify(s.args, null, 2),
+      envText: JSON.stringify(s.env, null, 2),
+    });
+    setModalOpen(true);
+  }
+
+  // 一键添加自家 kb-mcp 作为外部 server（dogfooding）
+  async function quickAddSelf() {
+    if (!sidecarBinaryPath) {
+      message.warning("还没找到 kb-mcp binary，先 pnpm build:mcp");
+      return;
+    }
+    try {
+      await invoke<McpServer>("mcp_create_server", {
+        input: {
+          name: "kb-mcp (self)",
+          transport: "stdio",
+          command: sidecarBinaryPath,
+          args: ["--db-path", dbPath],
+          env: {},
+          enabled: true,
+        } as McpServerInput,
+      });
+      message.success("已添加 kb-mcp 自身作为外部 server，可点 「列出工具」 测试");
+      void load();
+    } catch (e) {
+      message.error(`添加失败: ${e}`);
+    }
+  }
+
+  async function handleSave() {
+    try {
+      const v = await form.validateFields();
+      let args: string[];
+      let env: Record<string, string>;
+      try {
+        args = JSON.parse(v.argsText || "[]");
+        if (!Array.isArray(args)) throw new Error("args 必须是 JSON 数组");
+      } catch (e) {
+        message.error(`args JSON 解析失败: ${e}`);
+        return;
+      }
+      try {
+        env = JSON.parse(v.envText || "{}");
+        if (typeof env !== "object" || Array.isArray(env)) throw new Error("env 必须是 JSON object");
+      } catch (e) {
+        message.error(`env JSON 解析失败: ${e}`);
+        return;
+      }
+
+      const input: McpServerInput = {
+        name: v.name,
+        transport: "stdio",
+        command: v.command,
+        args,
+        env,
+        enabled: v.enabled,
+      };
+
+      if (editingId === null) {
+        await invoke<McpServer>("mcp_create_server", { input });
+        message.success("已创建");
+      } else {
+        await invoke<McpServer>("mcp_update_server", { id: editingId, input });
+        message.success("已更新（client 缓存已清，下次调用重新 spawn）");
+      }
+      setModalOpen(false);
+      void load();
+    } catch (e) {
+      // antd Form validate 会 throw，无需额外报错
+      if (e && typeof e === "object" && "errorFields" in e) return;
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    try {
+      await invoke("mcp_delete_server", { id });
+      message.success("已删除");
+      void load();
+    } catch (e) {
+      message.error(`删除失败: ${e}`);
+    }
+  }
+
+  async function handleToggleEnabled(id: number, enabled: boolean) {
+    try {
+      await invoke("mcp_set_server_enabled", { id, enabled });
+      void load();
+    } catch (e) {
+      message.error(`切换失败: ${e}`);
+    }
+  }
+
+  async function handleListTools(id: number, name: string) {
+    const hide = message.loading(`正在 spawn ${name} ...`, 0);
+    try {
+      const tools = await invoke<{ name: string }[]>("mcp_external_list_tools", {
+        serverId: id,
+      });
+      hide();
+      Modal.info({
+        title: `${name} · ${tools.length} 个工具`,
+        width: 600,
+        content: (
+          <div style={{ maxHeight: 400, overflow: "auto" }}>
+            <pre style={{ fontSize: 12 }}>{JSON.stringify(tools, null, 2)}</pre>
+          </div>
+        ),
+      });
+    } catch (e) {
+      hide();
+      message.error(`列出工具失败: ${e}`);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <Text strong>外部 MCP servers · {servers.length}</Text>
+        <Space>
+          <Button size="small" icon={<PlusOutlined />} onClick={quickAddSelf}>
+            一键添加 kb-mcp（自我集成测试）
+          </Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>
+            添加 server
+          </Button>
+        </Space>
+      </div>
+
+      {servers.length === 0 ? (
+        <Empty
+          description="还没有外部 MCP server。试试「一键添加 kb-mcp」自我集成测试，或加 GitHub/Filesystem/高德地图 等第三方 server"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+        />
+      ) : (
+        <Table
+          size="small"
+          rowKey="id"
+          loading={loading}
+          dataSource={servers}
+          pagination={false}
+          columns={[
+            { title: "名称", dataIndex: "name", width: 150 },
+            {
+              title: "Command",
+              dataIndex: "command",
+              ellipsis: true,
+              render: (v: string, r: McpServer) => (
+                <Tooltip title={`${v} ${r.args.join(" ")}`}>
+                  <code style={{ fontSize: 12 }}>{v}</code>
+                </Tooltip>
+              ),
+            },
+            {
+              title: "启用",
+              dataIndex: "enabled",
+              width: 70,
+              render: (v: boolean, r: McpServer) => (
+                <Switch
+                  size="small"
+                  checked={v}
+                  onChange={(checked) => void handleToggleEnabled(r.id, checked)}
+                />
+              ),
+            },
+            {
+              title: "操作",
+              width: 220,
+              render: (_, r: McpServer) => (
+                <Space size="small">
+                  <Button
+                    size="small"
+                    onClick={() => void handleListTools(r.id, r.name)}
+                    disabled={!r.enabled}
+                  >
+                    列出工具
+                  </Button>
+                  <Button size="small" onClick={() => openEdit(r)}>
+                    编辑
+                  </Button>
+                  <Popconfirm
+                    title="删除该 MCP server？"
+                    onConfirm={() => void handleDelete(r.id)}
+                  >
+                    <Button danger size="small" icon={<Trash2 size={12} />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      )}
+
+      <Modal
+        title={editingId === null ? "添加 MCP server" : "编辑 MCP server"}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onOk={() => void handleSave()}
+        width={640}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="name"
+            label="名称（唯一）"
+            rules={[{ required: true, message: "必填" }]}
+          >
+            <Input placeholder="github / 高德地图 / filesystem" />
+          </Form.Item>
+          <Form.Item
+            name="command"
+            label="可执行文件路径或命令"
+            rules={[{ required: true, message: "必填" }]}
+            extra="例：npx / 绝对路径 / kb-mcp.exe"
+          >
+            <Input placeholder="C:/path/to/kb-mcp.exe 或 npx" />
+          </Form.Item>
+          <Form.Item
+            name="argsText"
+            label="参数（JSON 数组）"
+            extra='例：["-y", "@modelcontextprotocol/server-github"]'
+          >
+            <Input.TextArea rows={3} style={{ fontFamily: "monospace" }} />
+          </Form.Item>
+          <Form.Item
+            name="envText"
+            label="环境变量（JSON 对象）"
+            extra='例：{"GITHUB_TOKEN": "ghp_..."}'
+          >
+            <Input.TextArea rows={3} style={{ fontFamily: "monospace" }} />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
   );
 }
 

@@ -1052,3 +1052,26 @@ export interface MigrationProgress {
   bytesTotal: number;
   message: string;
 }
+
+// ─── M5-2: 外部 MCP Server ─────────────────────────────────────
+
+export interface McpServer {
+  id: number;
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpServerInput {
+  name: string;
+  transport?: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
