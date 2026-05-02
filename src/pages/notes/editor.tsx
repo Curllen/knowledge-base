@@ -28,6 +28,8 @@ import { VaultModal } from "@/components/vault/VaultModal";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import { EditorOutline } from "@/components/editor/EditorOutline";
@@ -37,6 +39,14 @@ import { MindMapView } from "@/components/notes/MindMapView";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 
 const { Text } = Typography;
+
+// 当前 webview 的 label。同一 webview 内不变，模块级常量即可。
+// popout 窗口的 label 形如 `popout-note-{id}`（由 popout_window.rs 创建），主窗口是 "main"。
+const CURRENT_WINDOW_LABEL = (() => {
+  try { return getCurrentWindow().label; }
+  catch { return ""; }
+})();
+const IS_POPOUT_WINDOW = CURRENT_WINDOW_LABEL.startsWith("popout-");
 
 /** 从 HTML 内容中提取 [[笔记标题]] 链接 */
 function extractWikiLinks(html: string): string[] {
@@ -731,6 +741,67 @@ export default function NoteEditorPage() {
   useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+
+  // 跨窗口同步：另一个 webview（主窗 ↔ popout）保存了同一 id 的笔记后，
+  // 这里通过 Tauri 全局事件 `note:updated` 收到通知。Zustand store 是 per-webview 的，
+  // 没法跨进程同步，所以走 Tauri 事件桥。
+  // 冲突保护：当前 buffer dirty 时不强制覆盖，弹 notification 让用户决定。
+  useEffect(() => {
+    if (!noteId) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen<{ id: number; sourceLabel: string }>("note:updated", async (e) => {
+      if (cancelled) return;
+      const payload = e.payload;
+      if (payload.id !== noteId) return;
+      if (payload.sourceLabel === CURRENT_WINDOW_LABEL) return; // 自己触发的，忽略
+
+      const reload = async () => {
+        try {
+          const fresh = await noteApi.get(noteId);
+          if (cancelled) return;
+          setNote(fresh);
+          setTitle(fresh.title);
+          setContent(fresh.content);
+          setDirty(false);
+          setTabDirty(noteId, false);
+          clearDraft(noteId);
+        } catch {
+          // 拉失败就不动 buffer
+        }
+      };
+
+      if (dirtyRef.current) {
+        notification.warning({
+          key: `note-updated-${noteId}`,
+          message: "其他窗口已更新此笔记",
+          description: "另一个窗口刚刚保存了内容。当前窗口有未保存修改——加载新版本会丢弃这些修改。",
+          btn: (
+            <Button
+              size="small"
+              type="primary"
+              onClick={() => {
+                notification.destroy(`note-updated-${noteId}`);
+                void reload();
+              }}
+            >
+              覆盖加载
+            </Button>
+          ),
+          duration: 0, // 永不自动消失
+        });
+      } else {
+        await reload();
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [noteId, notification, setTabDirty, clearDraft]);
   useEffect(() => {
     if (skipNotesInit.current) {
       skipNotesInit.current = false;
@@ -1415,21 +1486,24 @@ export default function NoteEditorPage() {
               onClick={() => setMindMapOpen(true)}
             />
           </Tooltip>
-          <Tooltip title="在新窗口打开（用于双屏 / 多笔记对照）">
-            <Button
-              icon={<ExternalLink size={16} />}
-              onClick={async () => {
-                if (!noteId) return;
-                // 弹新窗口前先把未保存内容落库，避免 pop-out 看到老版本
-                if (dirty) await handleSave(true);
-                try {
-                  await noteApi.openInNewWindow(noteId);
-                } catch (e) {
-                  message.error(`打开新窗口失败：${e}`);
-                }
-              }}
-            />
-          </Tooltip>
+          {/* popout 窗口里再点这个按钮没有意义（同 id 只会前置已存在窗口），直接隐藏 */}
+          {!IS_POPOUT_WINDOW && (
+            <Tooltip title="新窗口打开">
+              <Button
+                icon={<ExternalLink size={16} />}
+                onClick={async () => {
+                  if (!noteId) return;
+                  // 弹新窗口前先把未保存内容落库，避免 pop-out 看到老版本
+                  if (dirty) await handleSave(true);
+                  try {
+                    await noteApi.openInNewWindow(noteId);
+                  } catch (e) {
+                    message.error(`打开新窗口失败：${e}`);
+                  }
+                }}
+              />
+            </Tooltip>
+          )}
           <Tooltip
             title={
               backlinks.length > 0

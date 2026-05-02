@@ -3,6 +3,7 @@ use crate::services::note::NoteService;
 use crate::services::popout_window;
 use crate::services::trash::TrashService;
 use crate::state::AppState;
+use tauri::{Emitter, Manager};
 
 /// 创建笔记
 #[tauri::command]
@@ -14,13 +15,25 @@ pub fn create_note(
 }
 
 /// 更新笔记
+///
+/// 保存成功后广播 `note:updated` 全局事件，让其他打开同 id 的 webview 自动同步。
+/// payload.sourceLabel 让发起方自己忽略事件（不要刷自己刚保存的内容）。
 #[tauri::command]
 pub fn update_note(
     state: tauri::State<'_, AppState>,
+    window: tauri::Window,
     id: i64,
     input: NoteInput,
 ) -> Result<Note, String> {
-    NoteService::update(&state.db, id, &input).map_err(|e| e.to_string())
+    let note = NoteService::update(&state.db, id, &input).map_err(|e| e.to_string())?;
+    let _ = window.app_handle().emit(
+        "note:updated",
+        serde_json::json!({
+            "id": id,
+            "sourceLabel": window.label(),
+        }),
+    );
+    Ok(note)
 }
 
 /// 删除笔记（软删除，移入回收站）

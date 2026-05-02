@@ -559,6 +559,13 @@ export function AppLayout() {
         <Content
           style={{
             padding: focusMode ? 0 : 24,
+            // popout 窗口用 OS 原生标题栏（decorations:true），顶部 ~32px 被系统占用，
+            // 给内容让位，否则编辑器 topbar 会被系统标题栏盖住
+            paddingTop: isPopoutWindow ? 32 : (focusMode ? 0 : 24),
+            // popout 模式下两侧给一点透气 padding，主窗有 SidePanel/Sider 视觉分隔，
+            // popout 内容直接贴窗框看着挤
+            paddingLeft: isPopoutWindow ? 16 : undefined,
+            paddingRight: isPopoutWindow ? 16 : undefined,
             overflow: "auto",
           }}
         >

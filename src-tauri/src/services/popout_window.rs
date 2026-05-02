@@ -37,10 +37,13 @@ pub fn open_note(app: &AppHandle, note_id: i64) -> Result<(), AppError> {
 
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("笔记")
-        .inner_size(900.0, 720.0)
-        .min_inner_size(560.0, 400.0)
+        // popout 默认窗口宽一点，编辑器 topbar 工具按钮多，900px 会挤
+        .inner_size(1200.0, 780.0)
+        .min_inner_size(720.0, 480.0)
         .center()
         .resizable(true)
+        // 用 OS 原生标题栏：自带标题"笔记"、最小化/最大化/关闭按钮，不需要前端自绘。
+        // 前端 AppLayout 用 isPopoutWindow 给 Content 加 paddingTop=32 让位即可
         .decorations(true)
         .focused(true)
         .visible(true);
