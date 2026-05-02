@@ -1522,3 +1522,20 @@ body,
   opacity: 1;
   color: var(--ant-color-primary, #1677ff);
 }
+
+/* ─── 批注 mark ──────────────────────────────────────
+ * 视觉：浅黄底高亮 + 下划虚线，鼠标悬停显示原生 tooltip（来自 title 属性）。
+ * 与 highlight mark（纯背景色）区分：批注必须有下划虚线，让用户一眼看出"这是有注释的，不是普通高亮"。
+ */
+.kb-annotation {
+  background: rgba(255, 234, 0, 0.35);
+  border-bottom: 1px dashed rgba(195, 157, 0, 0.85);
+  cursor: help;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+[data-theme="dark"] .kb-annotation,
+.dark .kb-annotation {
+  background: rgba(255, 234, 0, 0.18);
+  border-bottom-color: rgba(253, 230, 75, 0.7);
+}

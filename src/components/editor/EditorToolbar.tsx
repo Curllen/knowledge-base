@@ -47,6 +47,7 @@ import { attachmentApi, imageApi, videoApi } from "@/lib/api";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 import { EditorStats } from "./EditorStats";
 import { EmojiPicker } from "./EmojiPicker";
+import { AnnotationButton } from "./AnnotationButton";
 
 interface ToolbarProps {
   editor: Editor;
@@ -396,6 +397,12 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         title: "高亮",
         action: () => editor.chain().focus().toggleHighlight().run(),
         isActive: () => editor.isActive("highlight"),
+      },
+      {
+        // 批注按钮：自带 Modal + 全局快捷键监听 + 右键菜单事件接收
+        icon: null,
+        title: "批注",
+        customRender: () => <AnnotationButton editor={editor} />,
       },
       {
         icon: <Code size={15} />,

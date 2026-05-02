@@ -2,6 +2,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Highlight from "@tiptap/extension-highlight";
+import { Annotation } from "./Annotation";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
@@ -1009,6 +1010,8 @@ export function TiptapEditor({
       }),
       Placeholder.configure({ placeholder }),
       Highlight.configure({ multicolor: true }),
+      // 批注：选中文字加补充说明，data-comment 直接存在 mark 里，跟着笔记走
+      Annotation,
       TaskList,
       TaskItem.configure({ nested: true }),
       // SafeLink：渲染成 <span data-href="..." role="link"> 而非 <a href>，
