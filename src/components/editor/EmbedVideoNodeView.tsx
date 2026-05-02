@@ -120,7 +120,6 @@ export function EmbedVideoNodeView({ node, editor, deleteNode }: NodeViewProps) 
             src={src}
             title={`${display.label} 嵌入视频`}
             allow="fullscreen; encrypted-media; picture-in-picture; autoplay"
-            allowFullScreen
             loading="lazy"
             onError={() => setIframeError(true)}
           />

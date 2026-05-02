@@ -194,6 +194,7 @@ export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPalett
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           onKeyDown={handleKeyDown}
+          allowClear
           autoFocus
         />
       </div>

@@ -109,6 +109,7 @@ export function HomeSearchInput({
         }}
         onFocus={() => setFocused(true)}
         onKeyDown={handleKeyDown}
+        allowClear
         style={{ borderRadius: 8 }}
       />
 

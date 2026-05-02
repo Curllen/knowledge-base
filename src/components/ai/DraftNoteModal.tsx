@@ -188,6 +188,7 @@ export function DraftNoteModal({ open, onClose, onSaved }: DraftNoteModalProps) 
               placeholder="要写什么？例：Rust 所有权入门 / 周报 2026-W17"
               maxLength={80}
               showCount
+              allowClear
             />
           </div>
 
