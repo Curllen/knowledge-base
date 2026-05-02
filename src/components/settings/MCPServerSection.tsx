@@ -915,8 +915,10 @@ interface ClaudeCodeBlockProps {
 }
 
 function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir, onInstall }: ClaudeCodeBlockProps) {
+  // 注：不用 space-y-* —— TailwindCSS 4 的 space utilities 在 antd 组件嵌套
+  // 场景下偶尔被覆盖（Alert 内部样式优先级），改用每块显式 mt-5 兜底。
   return (
-    <div className="space-y-5">
+    <div>
       <Alert
         type="info"
         showIcon
@@ -940,7 +942,7 @@ function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir, onInstall }: 
       />
 
       {/* CLAUDE.md 块 */}
-      <div>
+      <div className="mt-5">
         <div className="flex items-center justify-between mb-2">
           <Text strong style={{ fontSize: 13 }}>
             📄 CLAUDE.md（行为指引，纯文字）
@@ -974,7 +976,7 @@ function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir, onInstall }: 
       </div>
 
       {/* settings.json 片段（只读 / 可写两种） */}
-      <div>
+      <div className="mt-5">
         <div className="flex items-center justify-between mb-2">
           <Text strong style={{ fontSize: 13 }}>
             ⚙️ settings.json 片段（MCP 能力）
