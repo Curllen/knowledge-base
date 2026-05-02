@@ -142,6 +142,14 @@ fn wrap_template(title: &str, body: &str) -> String {
   /* 任务列表去 marker */
   ul.task-list, ul.contains-task-list {{ list-style: none; padding-left: 1em; }}
   .footnote-ref a {{ font-size: 0.8em; vertical-align: super; }}
+  /* 批注：浅黄底 + 下划虚线，鼠标悬停由 title 属性自带 tooltip */
+  span[data-comment], .kb-annotation {{
+    background: rgba(255, 234, 0, 0.35);
+    border-bottom: 1px dashed rgba(195, 157, 0, 0.85);
+    cursor: help;
+    padding: 0 1px;
+    border-radius: 2px;
+  }}
 </style>
 </head>
 <body>
