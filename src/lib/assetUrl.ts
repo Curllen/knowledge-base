@@ -24,10 +24,25 @@ export function toKbAsset(rel: string): string {
   return `${KB_ASSET_SCHEME}${clean}`;
 }
 
-/** 解析 `kb-asset://...` 提取相对路径；非 kb-asset 协议返回 null */
+/**
+ * 解析 `kb-asset://...` 提取相对路径；非 kb-asset 协议返回 null。
+ *
+ * 必须 decodeURIComponent：tiptap-markdown 序列化时会把 `![](kb-asset://中文.png)` 编码成
+ * `![](kb-asset://%E4%B8%AD%E6%96%87.png)` 写入 .md，重新加载后 attrs.src 是编码态。
+ * 我们的 rel 表示磁盘上的字面 POSIX 路径（safe_filename 已经过滤了不安全字符），
+ * 必须解码后再交给下游（resolveAssetSrc / 后端 resolve_asset_absolute / get_image_blob），
+ * 否则会按字面值 `%E4...` 在磁盘里找文件 → 找不到。
+ *
+ * 解码失败（比如 rel 里有孤立的 `%`，理论上不应出现）→ 退回原值，避免崩溃。
+ */
 export function parseKbAsset(src: string | null | undefined): string | null {
   if (!src || !src.startsWith(KB_ASSET_SCHEME)) return null;
-  return src.slice(KB_ASSET_SCHEME.length);
+  const rel = src.slice(KB_ASSET_SCHEME.length);
+  try {
+    return decodeURIComponent(rel);
+  } catch {
+    return rel;
+  }
 }
 
 /** 是否加密素材（按 .enc 后缀判定，兼容 image.rs 的 ENC_SUFFIX 约定） */
