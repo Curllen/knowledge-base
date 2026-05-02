@@ -112,7 +112,7 @@ fn build_claude_md_template() -> String {
 
 ## 可用工具
 
-**读工具（默认可用，13 个）**：
+**读工具（默认可用，15 个）**：
 - `search_notes(query, limit?)` — 全文搜索笔记
 - `get_note(id)` — 按 id 读笔记全文
 - `list_recent_notes(limit?)` — 按更新时间列最近笔记（无关键词时用）
@@ -123,7 +123,9 @@ fn build_claude_md_template() -> String {
 - `get_backlinks(id)` — 反向链接（哪些笔记引用了它）
 - `list_daily_notes(days?, limit?)` — 最近 N 天日记
 - `list_tasks(status?, keyword?, limit?)` — 主任务列表
-- `get_prompt(id?, builtin_code?)` — Prompt 模板
+- `list_subtasks(parent_task_id, limit?)` — 某主任务下的子任务
+- `get_prompt(id?, builtin_code?)` — 取一条 Prompt 模板的完整内容
+- `list_prompts` — Prompt 模板索引（不含内容，按需 get_prompt 取）
 - `list_templates` — 笔记模板（会议记录/读书笔记/周报 等）
 - `list_trash(limit?)` — 回收站里的笔记（可恢复）
 
