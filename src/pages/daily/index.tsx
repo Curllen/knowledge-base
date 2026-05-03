@@ -380,23 +380,25 @@ export default function DailyPage() {
             </div>
           ) : (
             <>
-              {/* 标题 */}
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="日记标题"
-                variant="borderless"
-                className="editor-title"
-                // 和下面的 Tiptap 工具栏拉开距离，避免标题与 H1/H2/B 图标紧贴
+              {/* 标题 + 旁挂 MicButton（mic 用兄弟元素而非 suffix，避免 antd
+                  .ant-input-affix-wrapper 包裹导致标题浮起白底大框） */}
+              <div
+                className="flex items-center gap-1"
                 style={{ marginBottom: 12 }}
-                suffix={
-                  <MicButton
-                    onTranscribed={(text) =>
-                      setTitle((prev) => (prev ? `${prev} ${text}` : text))
-                    }
-                  />
-                }
-              />
+              >
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="日记标题"
+                  variant="borderless"
+                  className="editor-title flex-1"
+                />
+                <MicButton
+                  onTranscribed={(text) =>
+                    setTitle((prev) => (prev ? `${prev} ${text}` : text))
+                  }
+                />
+              </div>
 
               {/* 内容编辑区 */}
               <TiptapEditor

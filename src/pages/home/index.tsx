@@ -54,6 +54,7 @@ import { relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { NewTodoButton } from "@/components/NewTodoButton";
+import { MicButton } from "@/components/MicButton";
 import { HomeSearchInput } from "@/components/HomeSearchInput";
 import { useAppStore } from "@/store";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
@@ -596,6 +597,11 @@ export default function HomePage() {
             <Text type="secondary" style={{ fontSize: 11 }}>
               Ctrl/⌘ + ↩
             </Text>
+            <MicButton
+              onTranscribed={(text) =>
+                setQuickNote((prev) => (prev ? `${prev}\n${text}` : text))
+              }
+            />
             <Button
               size="small"
               type="primary"

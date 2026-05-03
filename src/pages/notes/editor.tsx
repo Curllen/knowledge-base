@@ -1625,21 +1625,22 @@ export default function NoteEditorPage() {
         style={{ flex: 1, minWidth: 0 }}
       >
         <div className="editor-content-area">
-          {/* 标题 */}
-          <Input
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            placeholder="笔记标题"
-            variant="borderless"
-            className="editor-title"
-            suffix={
-              <MicButton
-                onTranscribed={(text) =>
-                  handleTitleChange(title ? `${title} ${text}` : text)
-                }
-              />
-            }
-          />
+          {/* 标题 + 旁挂 MicButton（mic 用兄弟元素而非 suffix，避免 antd
+              .ant-input-affix-wrapper 包裹导致标题浮起白底大框） */}
+          <div className="flex items-center gap-1">
+            <Input
+              value={title}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              placeholder="笔记标题"
+              variant="borderless"
+              className="editor-title flex-1"
+            />
+            <MicButton
+              onTranscribed={(text) =>
+                handleTitleChange(title ? `${title} ${text}` : text)
+              }
+            />
+          </div>
 
           {/* 文件夹 + 标签元数据 */}
           <div className="editor-meta">
