@@ -618,13 +618,13 @@ export default function NoteEditorPage() {
   // latest 字段：handleMove 写入最新宽度，handleUp 关闭时读出落库（避免闭包陷阱）
   const splitterDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
 
-  /** 右侧大纲宽度（像素，持久化到 localStorage） */
+  /** 右侧大纲宽度（像素，持久化到 localStorage；双击分隔条还原到默认） */
+  const OUTLINE_DEFAULT_WIDTH = 200;
   const [outlineWidth, setOutlineWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("editor.outlineWidth"));
-    return Number.isFinite(saved) && saved >= 160 ? saved : 200;
+    return Number.isFinite(saved) && saved >= 160 ? saved : OUTLINE_DEFAULT_WIDTH;
   });
   const outlineDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
-  const [outlineDragging, setOutlineDragging] = useState(false);
 
   // 标签状态
   const [noteTags, setNoteTags] = useState<Tag[]>([]);
@@ -1743,9 +1743,8 @@ export default function NoteEditorPage() {
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="拖动调整大纲宽度"
+            aria-label="拖动调整大纲宽度（双击还原默认）"
             className="editor-outline-splitter"
-            data-dragging={outlineDragging || undefined}
             onMouseDown={(e) => {
               e.preventDefault();
               outlineDragRef.current = {
@@ -1753,7 +1752,6 @@ export default function NoteEditorPage() {
                 startWidth: outlineWidth,
                 latest: outlineWidth,
               };
-              setOutlineDragging(true);
               const handleMove = (ev: MouseEvent) => {
                 const ref = outlineDragRef.current;
                 if (!ref) return;
@@ -1771,10 +1769,16 @@ export default function NoteEditorPage() {
                   localStorage.setItem("editor.outlineWidth", String(ref.latest));
                   outlineDragRef.current = null;
                 }
-                setOutlineDragging(false);
               };
               window.addEventListener("mousemove", handleMove);
               window.addEventListener("mouseup", handleUp);
+            }}
+            onDoubleClick={() => {
+              setOutlineWidth(OUTLINE_DEFAULT_WIDTH);
+              localStorage.setItem(
+                "editor.outlineWidth",
+                String(OUTLINE_DEFAULT_WIDTH),
+              );
             }}
           />
         )}

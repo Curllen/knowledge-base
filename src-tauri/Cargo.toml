@@ -9,7 +9,7 @@ members = ["kb-core", "mcp"]
 
 [package]
 name = "knowledge_base"
-version = "1.7.0"
+version = "1.7.1"
 description = "本地知识库桌面应用 - 全文搜索、双向链接、知识图谱"
 authors = ["抓蛙师"]
 edition = "2021"
@@ -104,4 +104,3 @@ lto = true
 codegen-units = 1
 strip = true
 # 注意：不能设置 panic = "abort"，否则 html2md 的子依赖会因 panic 策略冲突编译失败
-

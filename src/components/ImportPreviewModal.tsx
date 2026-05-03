@@ -12,7 +12,7 @@ interface Props {
   files: ScannedFile[];
   /** 扫描根路径（仅用于标题展示，如 "D:/笔记归档"） */
   rootPath: string;
-  /** 默认是否勾选"保留源目录结构" */
+  /** 默认是否勾选"保留原目录文件夹"。默认 false：直接导入子内容，不在目标下多包一层源根目录 */
   defaultPreserveRoot?: boolean;
   onCancel: () => void;
   /** 用户点击"开始导入"时回调，带上选择的 policy + preserveRoot */
@@ -32,7 +32,7 @@ export function ImportPreviewModal({
   open,
   files,
   rootPath,
-  defaultPreserveRoot = true,
+  defaultPreserveRoot = false,
   onCancel,
   onConfirm,
 }: Props) {
@@ -145,20 +145,19 @@ export function ImportPreviewModal({
           </div>
         )}
 
-        {/* 保留源目录 */}
+        {/* 是否保留源根目录这一层 */}
         <div className="mb-2">
           <Checkbox
             checked={preserveRoot}
             onChange={(e) => setPreserveRoot(e.target.checked)}
           >
             <span>
-              保留源目录结构
-              <Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
-                在目标下新建
-                <Text code style={{ fontSize: 11, margin: "0 2px" }}>
-                  {rootName}
-                </Text>
-                作为根
+              保留原目录文件夹
+              <Text code style={{ fontSize: 11, margin: "0 4px" }}>
+                {rootName}
+              </Text>
+              <Text type="secondary" style={{ marginLeft: 4, fontSize: 12 }}>
+                勾选则在目标下多包一层；不勾选则直接导入其内部内容（子文件夹层级始终保留）
               </Text>
             </span>
           </Checkbox>

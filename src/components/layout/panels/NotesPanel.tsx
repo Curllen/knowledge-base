@@ -1817,7 +1817,6 @@ export function NotesPanel() {
           open
           files={importPreview.files}
           rootPath={importPreview.rootPath}
-          defaultPreserveRoot
           onCancel={() => setImportPreview(null)}
           onConfirm={async ({ policy, preserveRoot }) => {
             const { files, rootPath, folderId } = importPreview;

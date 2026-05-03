@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { theme as antdTheme } from "antd";
-import { ListTree } from "lucide-react";
+import { EyeOff, ListTree } from "lucide-react";
 
 /**
  * EditorOutline —— 笔记编辑页右侧大纲面板。
@@ -31,9 +31,11 @@ interface Props {
   editor: any | null;
   /** 滚动容器（即 .editor-body）。IntersectionObserver 的 root */
   scrollRoot?: HTMLElement | null;
+  /** 点击右上角小眼睛 → 隐藏大纲（hover 时才出现，避免常态视觉噪声） */
+  onHide?: () => void;
 }
 
-export function EditorOutline({ editor, scrollRoot }: Props) {
+export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
   const { token } = antdTheme.useToken();
   const [items, setItems] = useState<OutlineItem[]>([]);
   const [activePos, setActivePos] = useState<number | null>(null);
@@ -190,6 +192,18 @@ export function EditorOutline({ editor, scrollRoot }: Props) {
         <div className="editor-outline__header">
           <ListTree size={13} />
           <span>大纲</span>
+          {onHide && (
+            <button
+              type="button"
+              className="editor-outline__hide-btn"
+              onClick={onHide}
+              title="隐藏大纲"
+              aria-label="隐藏大纲"
+              style={{ marginLeft: "auto", color: token.colorTextQuaternary }}
+            >
+              <EyeOff size={13} />
+            </button>
+          )}
         </div>
         <div className="editor-outline__hint">
           标题不足，添加 H1~H6 即可看到大纲
@@ -215,6 +229,18 @@ export function EditorOutline({ editor, scrollRoot }: Props) {
         >
           {items.length}
         </span>
+        {onHide && (
+          <button
+            type="button"
+            className="editor-outline__hide-btn"
+            onClick={onHide}
+            title="隐藏大纲"
+            aria-label="隐藏大纲"
+            style={{ color: token.colorTextQuaternary }}
+          >
+            <EyeOff size={13} />
+          </button>
+        )}
       </div>
       <ul className="editor-outline__list">
         {items.map((it) => {
