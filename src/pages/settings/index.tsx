@@ -1924,7 +1924,14 @@ export default function SettingsPage() {
           </Form.Item>
           <Form.Item
             name="content"
-            label="模板内容"
+            label={
+              <div className="flex items-center justify-between w-full">
+                <span>模板内容</span>
+                <span style={{ fontSize: 12, color: "var(--ant-color-text-tertiary)", fontWeight: "normal" }}>
+                  可用变量：{"{{date}} / {{time}} / {{datetime}} / {{weekday}} / {{year}} / {{month}} / {{day}} / {{title}}"}
+                </span>
+              </div>
+            }
             initialValue=""
             valuePropName="content"
           >

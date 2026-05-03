@@ -622,6 +622,17 @@ export const templateApi = {
   update: (id: number, input: NoteTemplateInput) =>
     invoke<NoteTemplate>("update_template", { id, input }),
   delete: (id: number) => invoke<void>("delete_template", { id }),
+  /** 按模板建笔记：后端会渲染 {{date}}/{{weekday}}/{{title}} 等占位符 */
+  createNoteFromTemplate: (
+    templateId: number,
+    title?: string,
+    folderId?: number | null,
+  ) =>
+    invoke<Note>("create_note_from_template", {
+      templateId,
+      title,
+      folderId: folderId ?? null,
+    }),
 };
 
 /** AI 写作辅助 API */

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Modal, Card, Spin, Empty, message } from "antd";
 import { useNavigate } from "react-router-dom";
 
-import { noteApi, templateApi } from "@/lib/api";
+import { templateApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { NoteTemplate } from "@/types";
 
@@ -34,11 +34,12 @@ export function TemplatePickerModal({ open, folderId = null, onClose }: Props) {
 
   async function handlePick(tpl: NoteTemplate) {
     try {
-      const note = await noteApi.create({
-        title: tpl.name,
-        content: tpl.content,
-        folder_id: folderId,
-      });
+      // 走 create_note_from_template：后端会渲染 {{date}}/{{weekday}} 等占位符
+      const note = await templateApi.createNoteFromTemplate(
+        tpl.id,
+        tpl.name,
+        folderId,
+      );
       message.success("已从模板创建");
       onClose();
       useAppStore.getState().bumpNotesRefresh();

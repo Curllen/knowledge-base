@@ -256,7 +256,9 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 20px;
+  /* 左右 32px：editor-page 的 margin:-24px 把 topbar 横向扩到 Content padding 外，
+     这里需多给 24px 抵消，再留 8px 让"返回 / 删除"按钮不贴边 */
+  padding: 8px 32px;
   border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
   background: var(--ant-color-bg-container, #fff);
   flex-shrink: 0;

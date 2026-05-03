@@ -1893,7 +1893,8 @@ fn create_folder(
 }
 
 /// 按模板创建笔记。title 不传则用「模板名 · YYYY-MM-DD」。
-/// 内部复用 create_note 的字段维护（title_normalized + content_hash）
+/// 内部复用 create_note 的字段维护（title_normalized + content_hash），
+/// 落库前先渲染 `{{date}} / {{weekday}} / {{title}} / ...` 等占位符。
 fn create_note_from_template(
     conn: &Connection,
     template_id: i64,
@@ -1912,8 +1913,35 @@ fn create_note_from_template(
         }
     };
 
-    let id = create_note(conn, &final_title, &template_content, folder_id)?;
+    let rendered = render_template_vars(&template_content, &final_title);
+    let id = create_note(conn, &final_title, &rendered, folder_id)?;
     Ok((id, final_title))
+}
+
+/// 渲染笔记模板内的 `{{date}}` / `{{weekday}}` 等占位符。
+/// 与主 crate `services/template.rs::render_variables` 保持一致 —— kb-core 不依赖
+/// 主 crate，所以这里独立维护一份；改一边记得改另一边。
+fn render_template_vars(content: &str, title: &str) -> String {
+    use chrono::{Datelike, Local};
+    let now = Local::now();
+    let weekday = match now.weekday() {
+        chrono::Weekday::Mon => "星期一",
+        chrono::Weekday::Tue => "星期二",
+        chrono::Weekday::Wed => "星期三",
+        chrono::Weekday::Thu => "星期四",
+        chrono::Weekday::Fri => "星期五",
+        chrono::Weekday::Sat => "星期六",
+        chrono::Weekday::Sun => "星期日",
+    };
+    content
+        .replace("{{datetime}}", &now.format("%Y-%m-%d %H:%M").to_string())
+        .replace("{{date}}", &now.format("%Y-%m-%d").to_string())
+        .replace("{{time}}", &now.format("%H:%M").to_string())
+        .replace("{{year}}", &now.format("%Y").to_string())
+        .replace("{{month}}", &now.format("%m").to_string())
+        .replace("{{day}}", &now.format("%d").to_string())
+        .replace("{{weekday}}", weekday)
+        .replace("{{title}}", title)
 }
 
 /// 把回收站里的笔记还原（is_deleted: 1 → 0）。
