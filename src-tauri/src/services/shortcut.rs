@@ -36,6 +36,7 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("global.openDaily", "CommandOrControl+Alt+D"),
     ("global.openSearch", "CommandOrControl+Alt+F"),
     ("global.asrCapture", "CommandOrControl+Shift+V"),
+    ("global.asrToggle", "CommandOrControl+Shift+Space"),
 ];
 
 /// 进程内缓存：「ID → 当前注册中的 accel」
@@ -259,6 +260,13 @@ fn dispatch_action(app: AppHandle, id: &str) {
             // 实际录音 / 转写 / 落库都在前端发起（复用 asrApi + MicButton 等已有能力）
             focus_main(&app);
             let _ = app.emit("asr:open_capture", ());
+        }
+        "global.asrToggle" => {
+            // 边写边说：唤起主窗 + 通知前端 AsrToggleController
+            // 控制器自己维护 idle/recording/transcribing 状态，按一下切换
+            // 文字注入到当前焦点输入框；无焦点输入则 fallback 打开 Modal
+            focus_main(&app);
+            let _ = app.emit("asr:toggle", ());
         }
         _ => log::warn!("[shortcut] 未知 action id: {}", id),
     }

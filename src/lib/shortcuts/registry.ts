@@ -64,6 +64,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     group: "全局快捷键（系统级，后台也可用）",
     desc: "语音快速捕获（录音 → 文字 → 任务/笔记）",
   },
+  {
+    id: "global.asrToggle",
+    scope: "global",
+    defaultAccel: "CommandOrControl+Shift+Space",
+    group: "全局快捷键（系统级，后台也可用）",
+    desc: "语音 toggle：边写边说，文字直接落到当前焦点输入框",
+  },
 
   // ─── 应用内（窗口聚焦时生效） ───
   { id: "app.palette", scope: "app", defaultAccel: "CommandOrControl+K", group: "应用内", desc: "打开命令面板" },

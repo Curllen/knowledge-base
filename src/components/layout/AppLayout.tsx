@@ -22,6 +22,7 @@ import { WindowControls } from "./WindowControls";
 import { InstanceBadge } from "./InstanceBadge";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
+import { AsrToggleController } from "@/components/AsrToggleController";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { StarryBackground } from "@/components/ui/StarryBackground";
 import { createBlankAndOpen } from "@/lib/noteCreator";
@@ -592,6 +593,7 @@ export function AppLayout() {
       <UpdateModal open={modalOpen} onClose={closeModal} update={update} />
       <ExitConfirmListener />
       <CloseRequestedListener />
+      <AsrToggleController />
     </Layout>
   );
 }
