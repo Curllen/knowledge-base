@@ -180,12 +180,13 @@ export function MobileMe() {
         <Row
           icon={<Folder size={20} className="text-amber-500" />}
           label="导入笔记"
-          onClick={() => message.info("移动端导入待开发")}
+          right={<span className="text-xs text-slate-400">.md / .txt</span>}
+          onClick={() => navigate("/quick-create")}
         />
         <Row
           icon={<FileArchive size={20} className="text-purple-500" />}
           label="导出 / 备份"
-          onClick={() => message.info("移动端导出待开发")}
+          info="桌面专属"
         />
         <Row
           icon={<Trash2 size={20} className="text-red-500" />}
@@ -208,11 +209,12 @@ export function MobileMe() {
           icon={<Moon size={20} className="text-slate-700" />}
           label="深色模式"
           right={<span className="text-xs text-slate-400">跟随系统</span>}
+          info="跟随系统设置，暂不支持手动切换"
         />
         <Row
           icon={<Palette size={20} className="text-pink-500" />}
           label="主题与字体"
-          right={<span className="text-xs text-slate-400">默认</span>}
+          info="桌面专属"
         />
         <Row
           icon={<LockKeyhole size={20} className="text-red-500" />}
@@ -222,7 +224,7 @@ export function MobileMe() {
         <Row
           icon={<KeyRound size={20} className="text-amber-500" />}
           label="笔记加密 Vault"
-          right={<span className="text-xs text-slate-400">未启用</span>}
+          info="桌面专属（移动端只读已加密笔记）"
         />
       </ListGroup>
 
@@ -247,7 +249,7 @@ export function MobileMe() {
         <Row
           icon={<Plug size={20} className="text-blue-500" />}
           label="MCP 服务器"
-          right={<span className="text-xs text-slate-400">桌面专属</span>}
+          info="MCP 走子进程 sidecar，移动端沙盒禁止 spawn"
         />
         <Row
           icon={<Info size={20} className="text-slate-500" />}
@@ -342,21 +344,40 @@ function Row({
   label,
   right,
   onClick,
+  info,
 }: {
   icon: React.ReactNode;
   label: string;
   right?: React.ReactNode;
   onClick?: () => void;
+  /** 仅信息提示（点击后弹 toast 解释为什么不可用），不显示 chevron */
+  info?: string;
 }) {
+  const isInteractive = !!onClick && !info;
+  const handleClick = () => {
+    if (info) {
+      message.info(info);
+      return;
+    }
+    onClick?.();
+  };
   return (
     <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 px-4 py-3 active:bg-slate-50"
+      onClick={handleClick}
+      className={`flex w-full items-center gap-3 px-4 py-3 ${
+        isInteractive ? "active:bg-slate-50" : "active:bg-slate-50"
+      } ${info ? "opacity-70" : ""}`}
     >
       {icon}
       <span className="flex-1 text-left text-sm text-slate-800">{label}</span>
-      {right}
-      <ChevronRight size={16} className="text-slate-300" />
+      {info ? (
+        <span className="text-xs text-slate-400">不可用</span>
+      ) : (
+        right
+      )}
+      {isInteractive && (
+        <ChevronRight size={16} className="text-slate-300" />
+      )}
     </button>
   );
 }
