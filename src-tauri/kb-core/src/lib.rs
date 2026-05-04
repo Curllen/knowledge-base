@@ -73,6 +73,49 @@ impl KbDb {
     }
 }
 
+// ─── 容错反序列化：接受 number 或 string 形式的整数 ────────────────
+//
+// 背景：部分 LLM（如 DeepSeek-V3.2）调用 MCP 工具时，
+// 即使 JSON Schema 明示 integer，仍会把 id 写成 "131" 字符串，
+// 导致 serde 默认反序列化抛 `invalid type: string ..., expected i64`。
+// 这里用 untagged 枚举挡掉 string→i64 的转换，统一应用到所有 id 字段。
+mod lenient_int {
+    use serde::{Deserialize, Deserializer};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AnyInt {
+        Int(i64),
+        Str(String),
+    }
+
+    fn parse_one<E: serde::de::Error>(v: AnyInt) -> Result<i64, E> {
+        match v {
+            AnyInt::Int(i) => Ok(i),
+            AnyInt::Str(s) => s.trim().parse().map_err(E::custom),
+        }
+    }
+
+    pub fn de_i64<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+        parse_one(AnyInt::deserialize(d)?)
+    }
+
+    pub fn de_opt_i64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+        match Option::<AnyInt>::deserialize(d)? {
+            None => Ok(None),
+            Some(AnyInt::Str(s)) if s.trim().is_empty() => Ok(None),
+            Some(v) => parse_one(v).map(Some),
+        }
+    }
+
+    pub fn de_vec_i64<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<i64>, D::Error> {
+        Vec::<AnyInt>::deserialize(d)?
+            .into_iter()
+            .map(parse_one)
+            .collect()
+    }
+}
+
 // ─── 工具入参 / 出参 schema ───────────────────────────────────────
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -88,6 +131,7 @@ struct SearchNotesArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetNoteArgs {
     /// 笔记 id，从 search_notes 的结果中取
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
 }
 
@@ -103,13 +147,14 @@ struct SearchByTagArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetBacklinksArgs {
     /// 目标笔记 id（要查"哪些笔记链接到了我"）
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ListDailyArgs {
     /// 最近多少天，默认 7
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     days: Option<i64>,
     /// 上限条数，默认 30
     #[serde(default)]
@@ -119,7 +164,7 @@ struct ListDailyArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ListTasksArgs {
     /// 任务状态过滤：0=todo / 1=done。不传则全部
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     status: Option<i64>,
     /// 关键词模糊匹配 title / description
     #[serde(default)]
@@ -136,13 +181,14 @@ struct CreateNoteArgs {
     /// 笔记正文（HTML 或 Markdown 都行，主应用前端用 TipTap 渲染）
     content: String,
     /// 可选：归属文件夹 id。不传则进"未分类"
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     folder_id: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct UpdateNoteArgs {
     /// 笔记 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
     /// 新标题（不传则保持不变）
     #[serde(default)]
@@ -152,13 +198,14 @@ struct UpdateNoteArgs {
     content: Option<String>,
     /// 新文件夹 id（不传则保持不变）。
     /// 限制：暂不支持把笔记"移回未分类"，需要的话请在主应用 UI 操作
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     folder_id: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct AddTagArgs {
     /// 笔记 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     note_id: i64,
     /// 标签名（不存在会自动创建）
     tag: String,
@@ -167,6 +214,7 @@ struct AddTagArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ListSubtasksArgs {
     /// 父任务 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     parent_task_id: i64,
     /// 上限条数，默认 50，最大 200
     #[serde(default)]
@@ -178,19 +226,20 @@ struct CreateFolderArgs {
     /// 文件夹名称（必填，前后空白会被 trim）
     name: String,
     /// 父文件夹 id；不传或 null 表示创建顶级文件夹
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     parent_id: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct CreateNoteFromTemplateArgs {
     /// 模板 id（从 list_templates 取）
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     template_id: i64,
     /// 新笔记标题（不传则用模板 name + 当前日期）
     #[serde(default)]
     title: Option<String>,
     /// 目标文件夹 id；不传则进未分类
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     folder_id: Option<i64>,
 }
 
@@ -204,18 +253,21 @@ struct ListTrashArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RestoreNoteArgs {
     /// 回收站里笔记的 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct DeleteNoteArgs {
     /// 笔记 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RemoveTagArgs {
     /// 笔记 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     note_id: i64,
     /// 标签名
     tag: String,
@@ -236,7 +288,7 @@ struct CreateTaskArgs {
     #[serde(default)]
     description: Option<String>,
     /// 优先级：0=紧急 / 1=普通(默认) / 2=低
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     priority: Option<i64>,
     /// 是否重要（艾森豪威尔矩阵的"重要性"维度），默认 false
     #[serde(default)]
@@ -249,6 +301,7 @@ struct CreateTaskArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct UpdateTaskArgs {
     /// 任务 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
     id: i64,
     /// 新标题（不传则不变）
     #[serde(default)]
@@ -257,7 +310,7 @@ struct UpdateTaskArgs {
     #[serde(default)]
     description: Option<String>,
     /// 新优先级
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     priority: Option<i64>,
     /// 新重要性
     #[serde(default)]
@@ -273,7 +326,7 @@ struct UpdateTaskArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ListNotesByFolderArgs {
     /// 文件夹 id；不传或 null 表示「未分类」（folder_id IS NULL）
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     folder_id: Option<i64>,
     /// 是否包含子文件夹下的笔记，默认 false（只取直接子项）
     #[serde(default)]
@@ -286,16 +339,17 @@ struct ListNotesByFolderArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct MoveNotesBatchArgs {
     /// 要移动的笔记 id 列表
+    #[serde(deserialize_with = "lenient_int::de_vec_i64")]
     ids: Vec<i64>,
     /// 目标文件夹 id；不传或 null 表示移到「未分类」
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     folder_id: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetPromptArgs {
     /// 提示词模板 id（与 builtin_code 二选一）
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     id: Option<i64>,
     /// 内置模板代码（与 id 二选一），如 "summarize" / "translate" 等
     #[serde(default)]
@@ -2156,4 +2210,48 @@ fn strip_tags(html: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lenient_id_accepts_int_and_string() {
+        // 数字
+        let a: GetNoteArgs = serde_json::from_str(r#"{"id":131}"#).unwrap();
+        assert_eq!(a.id, 131);
+        // LLM 包成字符串
+        let b: GetNoteArgs = serde_json::from_str(r#"{"id":"131"}"#).unwrap();
+        assert_eq!(b.id, 131);
+        // 带空白
+        let c: GetNoteArgs = serde_json::from_str(r#"{"id":"  42 "}"#).unwrap();
+        assert_eq!(c.id, 42);
+        // 非法字符串应失败
+        assert!(serde_json::from_str::<GetNoteArgs>(r#"{"id":"abc"}"#).is_err());
+    }
+
+    #[test]
+    fn lenient_opt_id_accepts_null_int_string() {
+        let a: ListNotesByFolderArgs = serde_json::from_str(r#"{"folder_id":null}"#).unwrap();
+        assert_eq!(a.folder_id, None);
+        let b: ListNotesByFolderArgs = serde_json::from_str(r#"{"folder_id":7}"#).unwrap();
+        assert_eq!(b.folder_id, Some(7));
+        let c: ListNotesByFolderArgs = serde_json::from_str(r#"{"folder_id":"7"}"#).unwrap();
+        assert_eq!(c.folder_id, Some(7));
+        // 字段缺省
+        let d: ListNotesByFolderArgs = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(d.folder_id, None);
+        // 空字符串视作 None（LLM 偶尔会传）
+        let e: ListNotesByFolderArgs = serde_json::from_str(r#"{"folder_id":""}"#).unwrap();
+        assert_eq!(e.folder_id, None);
+    }
+
+    #[test]
+    fn lenient_vec_ids_mixed() {
+        let a: MoveNotesBatchArgs =
+            serde_json::from_str(r#"{"ids":[1,"2",3,"4"]}"#).unwrap();
+        assert_eq!(a.ids, vec![1, 2, 3, 4]);
+        assert_eq!(a.folder_id, None);
+    }
 }
