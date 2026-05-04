@@ -99,7 +99,8 @@ function collectAllKeys(folders: Folder[]): string[] {
 
 /** Tree DataNode 扩展：携带 isNote 标志和原始数据，便于 renderTitle 区分 */
 type TreeNoteData = { isNote: true; note: Note };
-type TreeFolderData = { isNote: false };
+/** isChild：是否为子文件夹（非根级），用于 renderTitle 加视觉小点区分层级 */
+type TreeFolderData = { isNote: false; isChild: boolean };
 type TreeNodeData = TreeNoteData | TreeFolderData;
 type EnrichedNode = DataNode & { data?: TreeNodeData };
 
@@ -113,10 +114,11 @@ function foldersToTreeData(
   creatingUnderKey: string | null,
   notesByFolder: Map<number, Note[]>,
   tabTitleByNoteId: Map<number, string>,
+  depth: number = 0,
 ): EnrichedNode[] {
   return folders.map((f) => {
     const subFolders: EnrichedNode[] = f.children.length
-      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder, tabTitleByNoteId)
+      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder, tabTitleByNoteId, depth + 1)
       : [];
 
     const noteLeaves: EnrichedNode[] = (notesByFolder.get(f.id) ?? [])
@@ -148,7 +150,7 @@ function foldersToTreeData(
       // 拖拽落在叶子上会被当成"同级排序"，无法 drop-into 折叠的空文件夹。
       isLeaf: false,
       children: children.length ? children : undefined,
-      data: { isNote: false },
+      data: { isNote: false, isChild: depth > 0 },
     };
   });
 }
@@ -1466,6 +1468,10 @@ export function NotesPanel() {
     }
 
     // 文件夹：emoji 优先；否则用 hash 配色的填充文件夹图标
+    // 子文件夹（非根级）在图标中央叠一个小白点，让用户一眼区分层级
+    const folderData = (node as EnrichedNode).data;
+    const isChildFolder =
+      folderData && folderData.isNote === false && folderData.isChild;
     return (
       <span
         className="flex items-center gap-1.5 w-full"
@@ -1479,6 +1485,31 @@ export function NotesPanel() {
         {emoji ? (
           <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
             {emoji}
+          </span>
+        ) : isChildFolder ? (
+          <span
+            style={{
+              position: "relative",
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+          >
+            <FolderFilled style={{ color: token.colorPrimary }} />
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "calc(50% + 1px)",
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                background: token.colorBgContainer,
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+              }}
+            />
           </span>
         ) : (
           <FolderFilled style={{ flexShrink: 0, color: token.colorPrimary }} />
@@ -1516,7 +1547,7 @@ export function NotesPanel() {
       title: uncatTitle,
       isLeaf: false,
       children: uncatChildren.length ? uncatChildren : undefined,
-      data: { isNote: false },
+      data: { isNote: false, isChild: false },
     });
     return folderTree;
   }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes]);
