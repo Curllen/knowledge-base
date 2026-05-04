@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { message } from "antd";
 import { noteApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { Note } from "@/types";
 
 /**
@@ -128,13 +129,43 @@ export function MobileNoteEditor() {
     }, AUTOSAVE_DELAY_MS);
   }
 
-  // 离开页面时立即保存
+  /**
+   * 立即落盘 + 通知列表刷新。
+   * 返回按钮调用：用户回到列表前必须看到最新数据，否则会出现"返回时仍是旧数据"的错觉。
+   */
+  async function flushAndExit() {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (savedHideTimerRef.current) {
+      window.clearTimeout(savedHideTimerRef.current);
+      savedHideTimerRef.current = null;
+    }
+    if (dirtyRef.current) {
+      await doSave();
+    }
+    // 通知全局监听者刷新列表（MobileNotes 用 notesRefreshTick 重新拉数据）
+    useAppStore.getState().bumpNotesRefresh();
+    navigate(-1);
+  }
+
+  // 离开页面（非"返回按钮"路径，如 swipe back）兜底保存
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
       if (savedHideTimerRef.current)
         window.clearTimeout(savedHideTimerRef.current);
-      if (dirtyRef.current) void doSave();
+      if (dirtyRef.current) {
+        // 异步落盘 + 让监听者刷新（拿到的数据可能仍是旧的，但 bumpNotesRefresh 会
+        // 在 await 完成后触发再次刷新）
+        void doSave().then(() => {
+          useAppStore.getState().bumpNotesRefresh();
+        });
+      } else {
+        // 没改也敲一下，确保返回时列表展示最新（防御性）
+        useAppStore.getState().bumpNotesRefresh();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -210,10 +241,7 @@ export function MobileNoteEditor() {
       {/* 顶栏 */}
       <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-2 shrink-0">
         <button
-          onClick={() => {
-            if (dirtyRef.current) void doSave();
-            navigate(-1);
-          }}
+          onClick={() => void flushAndExit()}
           aria-label="返回"
           className="flex h-10 w-10 items-center justify-center"
         >

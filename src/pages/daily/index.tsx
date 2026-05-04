@@ -47,7 +47,7 @@ function formatSavedAt(d: Date): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export default function DailyPage() {
+function DesktopDailyPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // URL 是 date 的真相源；缺省时用今天，同时补写进 URL 让 SidePanel 高亮今天
@@ -484,4 +484,12 @@ export default function DailyPage() {
     useAppStore.getState().bumpNotesRefresh();
     return created;
   }
+}
+
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileDaily } from "./MobileDaily";
+
+export default function DailyPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileDaily /> : <DesktopDailyPage />;
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Pin, Plus, MoreHorizontal } from "lucide-react";
 import { noteApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { Note } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
@@ -39,9 +40,12 @@ export function MobileNotes() {
     }
   }, []);
 
+  // notesRefreshTick：MobileNoteEditor 保存返回时 bump，触发列表重新拉
+  const refreshTick = useAppStore((s) => s.notesRefreshTick);
+
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshTick]);
 
   const pinned = notes.filter((n) => n.is_pinned);
   const others = notes.filter((n) => !n.is_pinned);
