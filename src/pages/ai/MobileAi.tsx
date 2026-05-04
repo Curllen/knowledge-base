@@ -15,6 +15,7 @@ import { message } from "antd";
 import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiModel } from "@/types";
 import { relativeTime } from "@/lib/utils";
+import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
 
 /**
  * 移动端 AI 助手列表页（设计稿：06-ai.html）
@@ -72,6 +73,7 @@ export function MobileAi() {
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [models, setModels] = useState<AiModel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [addModelOpen, setAddModelOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,13 +107,13 @@ export function MobileAi() {
   }
 
   function openConversation(conv: AiConversation) {
-    navigate(`/ai?conv=${conv.id}`);
+    navigate(`/ai-chat/${conv.id}`);
   }
 
   async function createNew() {
     try {
       const conv = await aiChatApi.createConversation();
-      navigate(`/ai?conv=${conv.id}`);
+      navigate(`/ai-chat/${conv.id}`);
     } catch (e) {
       message.error(`创建失败: ${e}`);
     }
@@ -160,7 +162,7 @@ export function MobileAi() {
             ))
           )}
           <button
-            onClick={() => navigate("/settings/ai-models")}
+            onClick={() => setAddModelOpen(true)}
             aria-label="新增模型"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
           >
@@ -240,6 +242,15 @@ export function MobileAi() {
       >
         <MessageSquarePlus size={24} />
       </button>
+
+      <MobileAiModelModal
+        open={addModelOpen}
+        onClose={() => setAddModelOpen(false)}
+        onSaved={() => {
+          void load();
+        }}
+        okText="保存"
+      />
     </div>
   );
 }

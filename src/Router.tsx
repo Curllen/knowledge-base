@@ -12,6 +12,7 @@ import SettingsPage from "@/pages/settings";
 import AboutPage from "@/pages/about";
 import GraphPage from "@/pages/graph";
 import AiChatPage from "@/pages/ai";
+import { MobileAiChat } from "@/pages/ai/MobileAiChat";
 import TasksPage from "@/pages/tasks";
 import CardsPage from "@/pages/cards";
 import PromptsPage from "@/pages/prompts";
@@ -33,6 +34,13 @@ const router = createHashRouter([
   {
     path: "/emergency-reminder/:id",
     element: <EmergencyReminderPage />,
+    errorElement: <RouteErrorFallback />,
+  },
+  // 移动端 AI 聊天页：独立全屏路由（不走 MobileLayout / AppLayout），
+  // 没有底部 Tab、没有蓝色 + FAB，输入栏紧贴屏幕底部
+  {
+    path: "/ai-chat/:id",
+    element: <MobileAiChat />,
     errorElement: <RouteErrorFallback />,
   },
   {
