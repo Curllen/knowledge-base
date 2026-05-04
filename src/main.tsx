@@ -42,6 +42,22 @@ window.addEventListener(
   true,
 );
 
+// 禁用页面刷新快捷键（F5 / Ctrl+R / Ctrl+Shift+R / Ctrl+F5）。
+// 桌面应用不是浏览器，刷新会丢失未保存的编辑器状态、Zustand 内存状态、未落库的草稿，
+// 用户一不小心按到就丢草稿（尤其是 F5 单键）。capture 阶段拦截在所有业务监听之前。
+window.addEventListener(
+  "keydown",
+  (e) => {
+    const isF5 = e.key === "F5";
+    const isCtrlR = (e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R");
+    if (isF5 || isCtrlR) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  },
+  true,
+);
+
 loadThemeFromStore().then(() => {
   // 启动后台拉一次实例信息（多开标识 / 数据目录），不阻塞首屏
   useAppStore.getState().loadInstanceInfo();
