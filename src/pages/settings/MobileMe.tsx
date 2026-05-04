@@ -174,7 +174,8 @@ export function MobileMe() {
         <Row
           icon={<CloudUpload size={20} className="text-blue-500" />}
           label="云端同步"
-          right={<span className="text-xs text-slate-400">移动版规划中</span>}
+          right={<span className="text-xs text-slate-400">WebDAV</span>}
+          onClick={() => navigate("/sync")}
         />
         <Row
           icon={<Folder size={20} className="text-amber-500" />}

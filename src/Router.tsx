@@ -14,6 +14,7 @@ import GraphPage from "@/pages/graph";
 import AiChatPage from "@/pages/ai";
 import { MobileAiChat } from "@/pages/ai/MobileAiChat";
 import { MobileTaskDetail } from "@/pages/tasks/MobileTaskDetail";
+import { MobileSync } from "@/pages/sync/MobileSync";
 import TasksPage from "@/pages/tasks";
 import CardsPage from "@/pages/cards";
 import PromptsPage from "@/pages/prompts";
@@ -57,6 +58,12 @@ const router = createHashRouter([
   {
     path: "/task-detail/:id",
     element: <MobileTaskDetail />,
+    errorElement: <RouteErrorFallback />,
+  },
+  // 移动端云端同步：沉浸式全屏（独立顶层路由）
+  {
+    path: "/sync",
+    element: <MobileSync />,
     errorElement: <RouteErrorFallback />,
   },
   {
