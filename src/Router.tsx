@@ -17,6 +17,7 @@ import TasksPage from "@/pages/tasks";
 import CardsPage from "@/pages/cards";
 import PromptsPage from "@/pages/prompts";
 import HiddenPage from "@/pages/hidden";
+import QuickCreatePage from "@/pages/quick-create";
 import MigrationSplash from "@/pages/migration-splash";
 import EmergencyReminderPage from "@/pages/emergency-reminder";
 
@@ -63,6 +64,7 @@ const router = createHashRouter([
       { path: "cards", element: <CardsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "about", element: <AboutPage /> },
+      { path: "quick-create", element: <QuickCreatePage /> },
     ],
   },
 ]);

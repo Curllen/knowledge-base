@@ -115,7 +115,7 @@ export function MobileLayout() {
         {!hasOwnFab && (
           <button
             aria-label="新建"
-            onClick={() => navigate("/notes")}
+            onClick={() => navigate("/quick-create")}
             className="fixed right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-[#1677FF] text-white shadow-[0_8px_24px_rgba(22,119,255,0.4)] active:scale-95 transition-transform"
             style={{
               bottom: `calc(64px + env(safe-area-inset-bottom, 0px) + 16px)`,
