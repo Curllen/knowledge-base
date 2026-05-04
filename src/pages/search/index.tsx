@@ -24,7 +24,7 @@ const ALL_MODE_NOTES_PREVIEW = 20;
 
 type Scope = "all" | "notes" | "tasks";
 
-export default function SearchPage() {
+function DesktopSearchPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { token } = antdTheme.useToken();
@@ -454,4 +454,12 @@ function TaskRow({
       </div>
     </div>
   );
+}
+
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileSearch } from "./MobileSearch";
+
+export default function SearchPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileSearch /> : <DesktopSearchPage />;
 }
