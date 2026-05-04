@@ -308,15 +308,23 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
     if (!inlineMath) return;
 
     // 规则 2：行内公式 — `$..$`，避开 `$N` 数字（货币）和 `$$` 双号
-    const inlineRe = /(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)(?!\d)/g;
+    // 改写说明：原写法用了 negative lookbehind `(?<!\$)`，老 macOS / Linux
+    // webkit2gtk < 2.40 / 老 Edge WebView2 不支持 ES2018 lookbehind，会让
+    // `new RegExp` 直接抛 "invalid group specifier name" 致编辑器全屏崩。
+    // 改用 `(^|[^$])` 显式捕获前导字符达到等价语义：m[1] 是前导（行首
+    // 空串或一个非 $ 字符），m[2] 才是 LaTeX 内容；真正 $...$ 在文本里的
+    // 起点要把前导长度加进去。
+    const inlineRe = /(^|[^$])\$(?!\$)([^$\n]+?)\$(?!\$|\d)/g;
     const textStartInDoc = pos + 1;
     let m: RegExpExecArray | null;
     while ((m = inlineRe.exec(text)) !== null) {
-      const matchedText = m[0];
-      const latex = m[1];
+      const leading = m[1];
+      const latex = m[2];
+      const dollarStart = m.index + leading.length;
+      const dollarLen = latex.length + 2;
       replaces.push({
-        from: textStartInDoc + m.index,
-        to: textStartInDoc + m.index + matchedText.length,
+        from: textStartInDoc + dollarStart,
+        to: textStartInDoc + dollarStart + dollarLen,
         latex,
         kind: "inline",
       });

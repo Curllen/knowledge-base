@@ -1,5 +1,6 @@
 import { createHashRouter, RouterProvider } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { RouteErrorFallback } from "@/components/ui/ErrorBoundary";
 import HomePage from "@/pages/home";
 import NoteListPage from "@/pages/notes";
 import NoteEditorPage from "@/pages/notes/editor";
@@ -18,14 +19,26 @@ import HiddenPage from "@/pages/hidden";
 import MigrationSplash from "@/pages/migration-splash";
 import EmergencyReminderPage from "@/pages/emergency-reminder";
 
+// 路由级 errorElement：路由内任何同步渲染异常（如 TipTap 在老 WebView 上
+// 的 lookbehind 正则解析失败）都会被 RouteErrorFallback 接管，给用户友好
+// 提示而非 react-router v7 默认的"Hey developer"开发警告页。
 const router = createHashRouter([
   // T-013 完整版：迁移 splash 独立 URL，不走 AppLayout（启动期 db 还没初始化）
-  { path: "/migration-splash", element: <MigrationSplash /> },
+  {
+    path: "/migration-splash",
+    element: <MigrationSplash />,
+    errorElement: <RouteErrorFallback />,
+  },
   // 紧急待办接管窗口：独立 URL，不挂 AppLayout，避免 Sider/Header 跑出来
-  { path: "/emergency-reminder/:id", element: <EmergencyReminderPage /> },
+  {
+    path: "/emergency-reminder/:id",
+    element: <EmergencyReminderPage />,
+    errorElement: <RouteErrorFallback />,
+  },
   {
     path: "/",
     element: <AppLayout />,
+    errorElement: <RouteErrorFallback />,
     children: [
       { index: true, element: <HomePage /> },
       { path: "notes", element: <NoteListPage /> },
