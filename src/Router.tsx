@@ -1,5 +1,5 @@
 import { createHashRouter, RouterProvider } from "react-router-dom";
-import { AppLayout } from "@/components/layout/AppLayout";
+import { LayoutSwitch } from "@/components/layout/LayoutSwitch";
 import { RouteErrorFallback } from "@/components/ui/ErrorBoundary";
 import HomePage from "@/pages/home";
 import NoteListPage from "@/pages/notes";
@@ -37,7 +37,7 @@ const router = createHashRouter([
   },
   {
     path: "/",
-    element: <AppLayout />,
+    element: <LayoutSwitch />,
     errorElement: <RouteErrorFallback />,
     children: [
       { index: true, element: <HomePage /> },

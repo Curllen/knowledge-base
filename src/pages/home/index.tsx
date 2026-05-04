@@ -82,7 +82,11 @@ const { Text } = Typography;
  *   ⑤ 写作活力(笔记/连续天数/距上次/本周字数 + 14 天迷你图)
  *   ⑥ 置顶笔记(左) + 问 AI 输入(右,直接输入新建对话)
  */
-export default function HomePage() {
+/**
+ * 桌面端原版主页（保留所有原有 hook + 1300+ 行实现）。
+ * 移动端走文件末尾的 HomePage wrapper → MobileHome（按设计稿小屏布局）。
+ */
+function DesktopHomePage() {
   const navigate = useNavigate();
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
@@ -1309,4 +1313,18 @@ function MetricItem({
       </div>
     </div>
   );
+}
+
+// ─── 移动端 Wrapper（T-M008）─────────────────────────
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileHome } from "./MobileHome";
+
+/**
+ * Wrapper：根据视口/平台决定渲染桌面版 or 移动版。
+ * 注意：必须用 wrapper 模式而不是函数体内 early-return，
+ * 否则 React Hooks 顺序会因平台不同而变化（违反 Hooks 规则）。
+ */
+export default function HomePage() {
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileHome /> : <DesktopHomePage />;
 }
