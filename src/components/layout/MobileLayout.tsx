@@ -7,7 +7,21 @@ import {
   CheckSquare,
   User,
   Plus,
+  CalendarDays,
+  Tag,
+  Layers,
+  MessageSquareText,
+  EyeOff,
+  GitFork,
+  Search,
+  Trash2,
 } from "lucide-react";
+import {
+  MOBILE_TAB_REGISTRY,
+  type MobileTabKey,
+  type MobileTabMeta,
+} from "@/lib/mobileTabRegistry";
+import { useAppStore } from "@/store";
 
 /**
  * 移动端主布局。设计稿位于 output/UI原型/2026-05-04_知识库移动端App/。
@@ -27,50 +41,45 @@ interface TabItem {
   path: string;
   icon: typeof Home;
   label: string;
-  /** 当前路径以哪些前缀开头时高亮该 Tab */
   matchPrefixes: string[];
-  /** 高亮颜色 token，AI 用 accent，其它用 primary */
   activeColor?: "primary" | "accent";
 }
 
-const TABS: TabItem[] = [
-  {
-    key: "home",
-    path: "/",
-    icon: Home,
-    label: "主页",
-    matchPrefixes: ["/"],
-  },
-  {
-    key: "notes",
-    path: "/notes",
-    icon: FileText,
-    label: "笔记",
-    matchPrefixes: ["/notes", "/search", "/tags", "/daily", "/trash", "/hidden"],
-  },
-  {
-    key: "ai",
-    path: "/ai",
-    icon: Sparkles,
-    label: "AI",
-    matchPrefixes: ["/ai", "/prompts"],
-    activeColor: "accent",
-  },
-  {
-    key: "tasks",
-    path: "/tasks",
-    icon: CheckSquare,
-    label: "待办",
-    matchPrefixes: ["/tasks", "/cards"],
-  },
-  {
-    key: "me",
-    path: "/settings",
-    icon: User,
-    label: "我的",
-    matchPrefixes: ["/settings", "/about", "/graph"],
-  },
-];
+/** 把 registry 里的 icon key 翻译成 Lucide 组件 */
+const ICON_MAP: Record<MobileTabKey, typeof Home> = {
+  home: Home,
+  notes: FileText,
+  ai: Sparkles,
+  tasks: CheckSquare,
+  daily: CalendarDays,
+  tags: Tag,
+  cards: Layers,
+  prompts: MessageSquareText,
+  hidden: EyeOff,
+  graph: GitFork,
+  search: Search,
+  trash: Trash2,
+};
+
+function metaToTabItem(meta: MobileTabMeta): TabItem {
+  return {
+    key: meta.key,
+    path: meta.path,
+    icon: ICON_MAP[meta.key],
+    label: meta.label,
+    matchPrefixes: meta.matchPrefixes,
+    activeColor: meta.activeColor,
+  };
+}
+
+/** 「我的」固定为最后一格 */
+const ME_TAB: TabItem = {
+  key: "me",
+  path: "/settings",
+  icon: User,
+  label: "我的",
+  matchPrefixes: ["/settings", "/about", "/feature-toggle"],
+};
 
 function isTabActive(item: TabItem, pathname: string): boolean {
   // "/" 单独判（其它前缀都以 "/" 开头会误命中）
@@ -89,6 +98,13 @@ export function MobileLayout() {
   const hasOwnFab = PAGES_WITH_OWN_FAB.some(
     (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
   );
+
+  // 用户配置的前 4 格 Tab + 固定「我的」第 5 格
+  const tabKeys = useAppStore((s) => s.mobileTabKeys);
+  const TABS: TabItem[] = [
+    ...tabKeys.map((k) => metaToTabItem(MOBILE_TAB_REGISTRY[k])),
+    ME_TAB,
+  ];
 
   // Android 物理返回键 / 手势：让 history back 优先（路由内导航），
   // 而不是让 WebView 直接关闭应用。

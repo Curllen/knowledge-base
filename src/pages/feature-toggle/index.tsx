@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
@@ -17,17 +18,22 @@ import {
   Bot,
   Sparkles,
   EyeOff,
-} from "lucide-react";
-import {
+  // 移动端 Dashboard 项 / Tab 选择器额外用到
   Home as HomeIcon,
   TrendingUp,
   BarChart3,
   Clock,
   Zap,
+  CalendarDays,
+  MessageSquareText,
+  Sparkles as SparklesIcon,
+  Layers as LayersIcon,
+  User,
 } from "lucide-react";
-import { Switch, message } from "antd";
+import { Drawer, Switch, message } from "antd";
 import { useAppStore, OPTIONAL_VIEWS } from "@/store";
-import type { ActiveView, MobileDashboardItem } from "@/store";
+import type { ActiveView, MobileDashboardItem, MobileTabKey } from "@/store";
+import { MOBILE_TAB_REGISTRY, MOBILE_TAB_KEYS } from "@/lib/mobileTabRegistry";
 
 /**
  * 移动端「功能模块」开关页（设计稿：16-feature-toggle.html）
@@ -142,6 +148,22 @@ const OPTIONS: OptionMeta[] = [
   },
 ];
 
+/** 把 registry 的 icon key 翻译成 Lucide 组件（移动端 Tab 网格用） */
+const TAB_ICONS: Record<MobileTabKey, React.ReactNode> = {
+  home: <HomeIcon size={20} className="text-[#1677FF]" />,
+  notes: <FileText size={20} className="text-[#1677FF]" />,
+  ai: <SparklesIcon size={20} className="text-[#FA8C16]" />,
+  tasks: <CheckSquare size={20} className="text-[#1677FF]" />,
+  daily: <CalendarDays size={20} className="text-green-600" />,
+  tags: <Tag size={20} className="text-pink-600" />,
+  cards: <LayersIcon size={20} className="text-purple-600" />,
+  prompts: <MessageSquareText size={20} className="text-yellow-600" />,
+  hidden: <EyeOff size={20} className="text-red-600" />,
+  graph: <GitFork size={20} className="text-cyan-600" />,
+  search: <Search size={20} className="text-slate-600" />,
+  trash: <Trash2 size={20} className="text-red-500" />,
+};
+
 interface DashItemMeta {
   key: MobileDashboardItem;
   label: string;
@@ -199,6 +221,9 @@ export default function FeatureTogglePage() {
   const toggleMobileDashItem = useAppStore(
     (s) => s.toggleMobileDashboardItem,
   );
+  const mobileTabKeys = useAppStore((s) => s.mobileTabKeys);
+  const setMobileTabKey = useAppStore((s) => s.setMobileTabKey);
+  const [pickerSlot, setPickerSlot] = useState<number | null>(null);
 
   function reset() {
     // 重置：除 cards 外全开
@@ -247,6 +272,32 @@ export default function FeatureTogglePage() {
       </div>
 
       <div className="bg-slate-50 pb-12">
+        {/* 底部 Tab 配置（移动端独有） */}
+        <SectionLabel text={`底部 Tab · 已选 ${mobileTabKeys.length}/4 + 我的`} />
+        <div className="mx-4 mb-2 rounded-2xl bg-white p-3">
+          <div className="mb-2 text-[11px] leading-relaxed text-slate-500">
+            点击任意格子可换成其它功能。「我的」永远占最后一格，无需配置。
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {mobileTabKeys.map((k, idx) => (
+              <button
+                key={`${k}-${idx}`}
+                onClick={() => setPickerSlot(idx)}
+                className="flex flex-col items-center gap-1 rounded-xl border-2 border-blue-200 bg-blue-50 py-2.5 active:scale-95 transition-transform"
+              >
+                {TAB_ICONS[k]}
+                <span className="text-[10px] font-medium text-[#1677FF]">
+                  {MOBILE_TAB_REGISTRY[k].label}
+                </span>
+              </button>
+            ))}
+            <div className="flex flex-col items-center gap-1 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 py-2.5">
+              <User size={20} className="text-slate-400" />
+              <span className="text-[10px] text-slate-400">我的（固定）</span>
+            </div>
+          </div>
+        </div>
+
         {/* 核心模块 */}
         <SectionLabel
           icon={<Lock size={12} />}
@@ -294,6 +345,53 @@ export default function FeatureTogglePage() {
           💾 配置写入 app_config · 自动同步到桌面端
         </div>
       </div>
+
+      {/* Tab 选择 Drawer */}
+      <Drawer
+        title={`选择 Tab（第 ${(pickerSlot ?? 0) + 1} 格）`}
+        placement="bottom"
+        height={Math.min(MOBILE_TAB_KEYS.length * 60 + 80, 560)}
+        open={pickerSlot !== null}
+        onClose={() => setPickerSlot(null)}
+      >
+        <div className="grid grid-cols-3 gap-2">
+          {MOBILE_TAB_KEYS.map((k) => {
+            const meta = MOBILE_TAB_REGISTRY[k];
+            const inUse = mobileTabKeys.includes(k);
+            const inOtherSlot =
+              inUse &&
+              pickerSlot !== null &&
+              mobileTabKeys[pickerSlot] !== k;
+            return (
+              <button
+                key={k}
+                onClick={() => {
+                  if (pickerSlot !== null) {
+                    setMobileTabKey(pickerSlot, k);
+                    setPickerSlot(null);
+                    message.success(`已设置第 ${pickerSlot + 1} 格为「${meta.label}」`);
+                  }
+                }}
+                className={`flex flex-col items-center gap-1 rounded-xl py-3 ${
+                  pickerSlot !== null && mobileTabKeys[pickerSlot] === k
+                    ? "border-2 border-[#1677FF] bg-blue-50"
+                    : inOtherSlot
+                      ? "border border-amber-200 bg-amber-50"
+                      : "border border-slate-100 bg-white"
+                } active:scale-95 transition-transform`}
+              >
+                {TAB_ICONS[k]}
+                <span className="text-[11px] font-medium text-slate-700">
+                  {meta.label}
+                </span>
+                {inOtherSlot && (
+                  <span className="text-[9px] text-amber-600">已选 · 会自动换位</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </Drawer>
     </div>
   );
 }

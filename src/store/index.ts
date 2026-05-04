@@ -17,6 +17,14 @@ async function getConfigOrNull(key: string): Promise<string | null> {
 }
 import type { Folder, SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
+import {
+  DEFAULT_MOBILE_TAB_KEYS,
+  MOBILE_TAB_KEYS as ALL_MOBILE_TAB_KEYS,
+  MOBILE_TAB_SLOT_COUNT,
+  type MobileTabKey,
+} from "@/lib/mobileTabRegistry";
+
+export type { MobileTabKey };
 
 /**
  * 侧边栏当前活动视图（Activity Bar 模式）。
@@ -130,6 +138,11 @@ interface AppStore {
    * 默认全部显示。用户在 /feature-toggle 「主页 Dashboard 显示」分组里可关闭某些卡片。
    */
   mobileDashboardItems: Set<MobileDashboardItem>;
+  /**
+   * 移动端底部前 4 格 Tab 顺序（最后一格"我的"固定，不在此数组）。
+   * 持久化到 app_config.mobile_tab_keys。
+   */
+  mobileTabKeys: MobileTabKey[];
   /** SidePanel（Activity Bar 右侧主面板）宽度 */
   sidePanelWidth: number;
   /**
@@ -231,6 +244,10 @@ interface AppStore {
   toggleMobileDashboardItem: (item: MobileDashboardItem) => void;
   /** 启动期从 app_config 加载 mobile_dashboard_items */
   loadMobileDashboardItems: () => Promise<void>;
+  /** 替换底部 Tab 第 slot 格（0..3）的 key */
+  setMobileTabKey: (slot: number, key: MobileTabKey) => void;
+  /** 启动期加载 mobile_tab_keys */
+  loadMobileTabKeys: () => Promise<void>;
   /** 设置 SidePanel 宽度（自动 clamp 到 [MIN, MAX]） */
   setSidePanelWidth: (width: number) => void;
   /** 设置 SidePanel 可见性 */
@@ -367,6 +384,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeView: "notes",
   enabledViews: new Set(DEFAULT_ENABLED_VIEWS),
   mobileDashboardItems: new Set(DEFAULT_MOBILE_DASHBOARD_ITEMS),
+  mobileTabKeys: [...DEFAULT_MOBILE_TAB_KEYS],
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
   recentSearches: [],
@@ -468,6 +486,46 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     } catch (e) {
       console.warn("[settings] parse mobile_dashboard_items failed:", e);
+    }
+  },
+  setMobileTabKey: (slot, key) => {
+    if (slot < 0 || slot >= MOBILE_TAB_SLOT_COUNT) return;
+    const cur = get().mobileTabKeys;
+    const next = [...cur];
+    // 去重：如果新 key 已在其它槽里，把它和当前槽换位
+    const dupIdx = next.indexOf(key);
+    if (dupIdx >= 0 && dupIdx !== slot) {
+      next[dupIdx] = next[slot];
+    }
+    next[slot] = key;
+    set({ mobileTabKeys: next });
+    void configApi
+      .set("mobile_tab_keys", JSON.stringify(next))
+      .catch((e) =>
+        console.warn("[settings] persist mobile_tab_keys failed:", e),
+      );
+  },
+  loadMobileTabKeys: async () => {
+    const raw = await getConfigOrNull("mobile_tab_keys");
+    if (!raw) return;
+    try {
+      const list = JSON.parse(raw) as MobileTabKey[];
+      if (Array.isArray(list)) {
+        const valid = list
+          .filter((k) => ALL_MOBILE_TAB_KEYS.includes(k as MobileTabKey))
+          .slice(0, MOBILE_TAB_SLOT_COUNT);
+        // 不足 4 格用默认补齐
+        while (valid.length < MOBILE_TAB_SLOT_COUNT) {
+          const pick = DEFAULT_MOBILE_TAB_KEYS[valid.length];
+          if (!valid.includes(pick)) valid.push(pick);
+          else break;
+        }
+        if (valid.length === MOBILE_TAB_SLOT_COUNT) {
+          set({ mobileTabKeys: valid });
+        }
+      }
+    } catch (e) {
+      console.warn("[settings] parse mobile_tab_keys failed:", e);
     }
   },
   setSidePanelWidth: (width) =>
