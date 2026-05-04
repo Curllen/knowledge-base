@@ -34,6 +34,7 @@ import { listen } from "@tauri-apps/api/event";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import { EditorOutline } from "@/components/editor/EditorOutline";
+import { EditorStats } from "@/components/editor/EditorStats";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { MicButton } from "@/components/MicButton";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
@@ -384,6 +385,7 @@ function MetaBar({
   allTags,
   folders,
   folderId,
+  editor,
   onTagsChange,
   onFolderChange,
   onCreateTag,
@@ -393,6 +395,7 @@ function MetaBar({
   allTags: Tag[];
   folders: Folder[];
   folderId: number | null;
+  editor: any | null;
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
   onCreateTag: (name: string) => Promise<void>;
@@ -591,6 +594,14 @@ function MetaBar({
           />
         </div>
       </div>
+
+      {/* 字数统计：放在元数据栏末尾（与文件夹/标签同行），shrink-0 防被标签挤掉 */}
+      {editor && (
+        <div className="shrink-0 flex items-center gap-2">
+          <Divider type="vertical" style={{ height: 20, margin: 0 }} />
+          <EditorStats editor={editor} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1396,10 +1407,7 @@ function DesktopNoteEditorPage() {
 
   if (loading) {
     return (
-      <div
-        className="editor-page"
-        style={focusMode ? { margin: 0 } : undefined}
-      >
+      <div className="editor-page">
         <div className="flex items-center justify-center flex-1">
           <Spin size="large" />
         </div>
@@ -1408,12 +1416,7 @@ function DesktopNoteEditorPage() {
   }
 
   return (
-    <div
-      className="editor-page"
-      // 专注模式下 AppLayout 的 Content padding=0，editor-page 的 margin:-24px
-      // 也必须抵消为 0，否则会把 topbar 的左右按钮推到视窗外（修 F11 截断 bug）
-      style={focusMode ? { margin: 0 } : undefined}
-    >
+    <div className="editor-page">
       {/* 顶部工具栏 */}
       <div className="editor-topbar">
         <Space align="center">
@@ -1705,6 +1708,7 @@ function DesktopNoteEditorPage() {
               allTags={allTags}
               folders={folders}
               folderId={note?.folder_id ?? null}
+              editor={editorInstance}
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
               onCreateTag={handleCreateTag}

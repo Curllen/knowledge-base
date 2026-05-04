@@ -245,11 +245,22 @@ body,
 
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
+/* editor-page 用 absolute 占满整个 Content（含 padding），需父级 position:relative。
+   两个绕不开的约束同时满足：
+   1) Content 是 overflow:auto 的滚动容器 — height:calc(100%+48px) 这种"撑出去"的
+      hack 会让 Content 永远溢出 48px、显示淡紫隐形滚动条，盖住 .editor-body 的滚动条。
+   2) light-glass 主题 body 是紫色渐变 + Content 透明 — 任何让 editor-page 不覆盖
+      Content padding 区域（含上下 24px）的写法，都会让紫色横条从 padding 透出。
+   absolute + inset:0 不参与父 layout（不触发 Content 溢出），且 containing block 是
+   父 padding-box，自然把 Content 全部 padding 都覆盖掉。 */
+.ant-layout-content {
+  position: relative;
+}
 .editor-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  margin: -24px;  /* 抵消 Content 的 padding */
+  position: absolute;
+  inset: 0;
 }
 
 .editor-topbar {
@@ -278,10 +289,11 @@ body,
   align-items: start;
 }
 
+
 .editor-content-area {
-  /* 底部 40vh 空白：保证大纲点最后几个标题时能 scrollIntoView 到顶部
-     （否则容器已到 scrollTop 上限，看起来"点了没反应"） */
-  padding: 24px 48px 40vh;
+  /* 底部 10vh 空白：兼顾大纲跳转的 scrollIntoView 余量与视觉紧凑感；
+     原值 40vh / 20vh 离反向链接 / 字数统计区过远，最终降到 10vh。 */
+  padding: 24px 48px 10vh;
   width: 100%;
   box-sizing: border-box;
   display: flex;

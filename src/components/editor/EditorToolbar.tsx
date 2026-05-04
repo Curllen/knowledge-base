@@ -47,7 +47,6 @@ import { toKbAsset } from "@/lib/assetUrl";
 import { attachmentApi, imageApi, videoApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { insertVideoTimestamp } from "./VideoTimestamp";
-import { EditorStats } from "./EditorStats";
 import { EmojiPicker } from "./EmojiPicker";
 import { AnnotationButton } from "./AnnotationButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
@@ -974,9 +973,6 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             })}
           </span>
         ))}
-        {/* 右侧字数统计：占位 spacer 推到最右 + Popover hover 详细 */}
-        <span style={{ flex: 1, minWidth: 8 }} />
-        <EditorStats editor={editor} />
       </div>
 
       <Modal
