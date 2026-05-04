@@ -12,6 +12,7 @@ import {
   Pin,
 } from "lucide-react";
 import { systemApi, noteApi, taskApi, cardApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { DashboardStats, DailyWritingStat, Note, Task } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
@@ -50,6 +51,8 @@ function getGreeting(): string {
 
 export function MobileHome() {
   const navigate = useNavigate();
+  const dashItems = useAppStore((s) => s.mobileDashboardItems);
+  const showItem = (k: string) => dashItems.has(k as never);
   const [data, setData] = useState<DashboardData>({
     stats: null,
     recentNotes: [],
@@ -109,62 +112,71 @@ export function MobileHome() {
         </div>
       </div>
 
-      {/* 4 数据卡 (2x2) */}
+      {/* 4 数据卡 (2x2)：每张可独立隐藏 */}
       <div className="grid grid-cols-2 gap-2 px-4 pt-3">
-        <button
-          onClick={() => navigate("/daily")}
-          className="flex flex-col items-start rounded-2xl bg-gradient-to-br from-[#1677FF] to-blue-700 p-4 text-white active:scale-[0.98] transition-transform"
-        >
-          <div className="flex items-center gap-1.5 text-xs opacity-90">
-            <PenLine size={14} /> 今日字数
-          </div>
-          <div className="mt-1 text-2xl font-bold">{stats?.total_words ?? "—"}</div>
-          <div className="mt-0.5 text-[10px] opacity-80">总字数</div>
-        </button>
+        {showItem("today_words") && (
+          <button
+            onClick={() => navigate("/daily")}
+            className="flex flex-col items-start rounded-2xl bg-gradient-to-br from-[#1677FF] to-blue-700 p-4 text-white active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-1.5 text-xs opacity-90">
+              <PenLine size={14} /> 今日字数
+            </div>
+            <div className="mt-1 text-2xl font-bold">{stats?.total_words ?? "—"}</div>
+            <div className="mt-0.5 text-[10px] opacity-80">总字数</div>
+          </button>
+        )}
 
-        <button
-          onClick={() => navigate("/cards")}
-          className="flex flex-col items-start rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 p-4 text-white active:scale-[0.98] transition-transform"
-        >
-          <div className="flex items-center gap-1.5 text-xs opacity-90">
-            <Layers size={14} /> 待复习闪卡
-          </div>
-          <div className="mt-1 text-2xl font-bold">{data.dueCardsCount}</div>
-          <div className="mt-0.5 text-[10px] opacity-80">
-            {data.dueCardsCount > 0 ? "去复习" : "暂无待复习"}
-          </div>
-        </button>
+        {showItem("due_cards") && (
+          <button
+            onClick={() => navigate("/cards")}
+            className="flex flex-col items-start rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 p-4 text-white active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-1.5 text-xs opacity-90">
+              <Layers size={14} /> 待复习闪卡
+            </div>
+            <div className="mt-1 text-2xl font-bold">{data.dueCardsCount}</div>
+            <div className="mt-0.5 text-[10px] opacity-80">
+              {data.dueCardsCount > 0 ? "去复习" : "暂无待复习"}
+            </div>
+          </button>
+        )}
 
-        <button
-          onClick={() => navigate("/tasks")}
-          className="flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 active:scale-[0.98] transition-transform"
-        >
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <CheckSquare size={14} /> 今日待办
-          </div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">
-            {data.todayTasks.length}
-          </div>
-          <div className="mt-0.5 text-[10px] text-slate-400">待完成</div>
-        </button>
+        {showItem("today_tasks_card") && (
+          <button
+            onClick={() => navigate("/tasks")}
+            className="flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <CheckSquare size={14} /> 今日待办
+            </div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">
+              {data.todayTasks.length}
+            </div>
+            <div className="mt-0.5 text-[10px] text-slate-400">待完成</div>
+          </button>
+        )}
 
-        <button
-          onClick={() => navigate("/notes")}
-          className="flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 active:scale-[0.98] transition-transform"
-        >
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <FileText size={14} /> 笔记总数
-          </div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">
-            {stats?.total_notes ?? "—"}
-          </div>
-          <div className="mt-0.5 text-[10px] text-slate-400">
-            今日更新 {stats?.today_updated ?? 0}
-          </div>
-        </button>
+        {showItem("total_notes") && (
+          <button
+            onClick={() => navigate("/notes")}
+            className="flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <FileText size={14} /> 笔记总数
+            </div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">
+              {stats?.total_notes ?? "—"}
+            </div>
+            <div className="mt-0.5 text-[10px] text-slate-400">
+              今日更新 {stats?.today_updated ?? 0}
+            </div>
+          </button>
+        )}
       </div>
 
       {/* 快速操作 */}
+      {showItem("quick_actions") && (
       <div className="px-4 pt-4">
         <div className="mb-2 px-1 text-xs font-medium text-slate-400">
           快速操作
@@ -196,8 +208,10 @@ export function MobileHome() {
           />
         </div>
       </div>
+      )}
 
       {/* 今日待办速览 */}
+      {showItem("today_tasks_list") && (
       <div className="px-4 pt-4">
         <div className="mb-2 flex items-center justify-between px-1 text-xs">
           <span className="font-medium text-slate-400">
@@ -245,8 +259,10 @@ export function MobileHome() {
           </div>
         )}
       </div>
+      )}
 
       {/* 30 天写作热力图 */}
+      {showItem("heatmap") && (
       <div className="px-4 pt-4">
         <div className="mb-2 flex items-center justify-between px-1 text-xs">
           <span className="font-medium text-slate-400">30 天写作</span>
@@ -256,8 +272,10 @@ export function MobileHome() {
         </div>
         <WritingHeatmap trend={data.trend} />
       </div>
+      )}
 
       {/* 最近编辑 */}
+      {showItem("recent_notes") && (
       <div className="px-4 pt-4 pb-6">
         <div className="mb-2 flex items-center justify-between px-1 text-xs">
           <span className="font-medium text-slate-400">最近编辑</span>
@@ -306,6 +324,7 @@ export function MobileHome() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

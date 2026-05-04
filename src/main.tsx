@@ -49,6 +49,8 @@ loadThemeFromStore().then(() => {
   useAppStore.getState().loadNoteDefaults();
   // 拉一次"启用的侧栏视图"配置（用户在设置里勾选的功能模块开关）
   void useAppStore.getState().loadEnabledViews();
+  // 拉一次移动端 Dashboard 显示项偏好（仅移动端用，桌面端无害）
+  void useAppStore.getState().loadMobileDashboardItems();
 
   // 预热文件夹树：让 NotesPanel 第一次打开时直接命中缓存，避免"点笔记"时的等待
   // 用 requestIdleCallback 在浏览器空闲时跑，不和首屏渲染抢线程

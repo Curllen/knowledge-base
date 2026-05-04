@@ -125,6 +125,11 @@ interface AppStore {
    * 默认值：除 cards 外全部启用（见 DEFAULT_ENABLED_VIEWS）。
    */
   enabledViews: Set<ActiveView>;
+  /**
+   * 移动端主页 Dashboard 显示项集合（仅移动端使用，持久化到 app_config 的 mobile_dashboard_items）。
+   * 默认全部显示。用户在 /feature-toggle 「主页 Dashboard 显示」分组里可关闭某些卡片。
+   */
+  mobileDashboardItems: Set<MobileDashboardItem>;
   /** SidePanel（Activity Bar 右侧主面板）宽度 */
   sidePanelWidth: number;
   /**
@@ -222,6 +227,10 @@ interface AppStore {
   toggleEnabledView: (view: ActiveView) => void;
   /** 启动期从 app_config 加载已保存的 enabled_views（无值时保留 default） */
   loadEnabledViews: () => Promise<void>;
+  /** 切换某个移动端 Dashboard 项（持久化到 app_config.mobile_dashboard_items） */
+  toggleMobileDashboardItem: (item: MobileDashboardItem) => void;
+  /** 启动期从 app_config 加载 mobile_dashboard_items */
+  loadMobileDashboardItems: () => Promise<void>;
   /** 设置 SidePanel 宽度（自动 clamp 到 [MIN, MAX]） */
   setSidePanelWidth: (width: number) => void;
   /** 设置 SidePanel 可见性 */
@@ -316,6 +325,33 @@ const DEFAULT_ENABLED_VIEWS: Set<ActiveView> = new Set(
   OPTIONAL_VIEWS.filter((v) => v !== "cards"),
 );
 
+/** 移动端 Dashboard 可隐藏项（仅移动端用） */
+export type MobileDashboardItem =
+  | "today_words" // 今日字数卡（蓝渐变）
+  | "due_cards" // 待复习闪卡卡（紫渐变）
+  | "today_tasks_card" // 今日待办计数卡
+  | "total_notes" // 笔记总数卡
+  | "quick_actions" // 4 列快速操作
+  | "today_tasks_list" // 今日待办速览列表
+  | "heatmap" // 30 天写作热力图
+  | "recent_notes"; // 最近编辑
+
+export const MOBILE_DASHBOARD_ITEMS: readonly MobileDashboardItem[] = [
+  "today_words",
+  "due_cards",
+  "today_tasks_card",
+  "total_notes",
+  "quick_actions",
+  "today_tasks_list",
+  "heatmap",
+  "recent_notes",
+] as const;
+
+/** 默认全部显示 */
+const DEFAULT_MOBILE_DASHBOARD_ITEMS: Set<MobileDashboardItem> = new Set(
+  MOBILE_DASHBOARD_ITEMS,
+);
+
 export const useAppStore = create<AppStore>((set, get) => ({
   lightTheme: "light-glass",
   darkTheme: "dark-starry",
@@ -330,6 +366,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   alwaysOnTop: false,
   activeView: "notes",
   enabledViews: new Set(DEFAULT_ENABLED_VIEWS),
+  mobileDashboardItems: new Set(DEFAULT_MOBILE_DASHBOARD_ITEMS),
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
   recentSearches: [],
@@ -404,6 +441,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     } catch (e) {
       console.warn("[settings] parse enabled_views failed:", e);
+    }
+  },
+  toggleMobileDashboardItem: (item) => {
+    const cur = get().mobileDashboardItems;
+    const next = new Set(cur);
+    if (next.has(item)) next.delete(item);
+    else next.add(item);
+    set({ mobileDashboardItems: next });
+    void configApi
+      .set("mobile_dashboard_items", JSON.stringify([...next]))
+      .catch((e) =>
+        console.warn("[settings] persist mobile_dashboard_items failed:", e),
+      );
+  },
+  loadMobileDashboardItems: async () => {
+    const raw = await getConfigOrNull("mobile_dashboard_items");
+    if (!raw) return;
+    try {
+      const list = JSON.parse(raw) as MobileDashboardItem[];
+      if (Array.isArray(list)) {
+        const valid = list.filter((v) =>
+          MOBILE_DASHBOARD_ITEMS.includes(v as MobileDashboardItem),
+        );
+        set({ mobileDashboardItems: new Set(valid) });
+      }
+    } catch (e) {
+      console.warn("[settings] parse mobile_dashboard_items failed:", e);
     }
   },
   setSidePanelWidth: (width) =>

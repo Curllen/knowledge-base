@@ -18,9 +18,16 @@ import {
   Sparkles,
   EyeOff,
 } from "lucide-react";
+import {
+  Home as HomeIcon,
+  TrendingUp,
+  BarChart3,
+  Clock,
+  Zap,
+} from "lucide-react";
 import { Switch, message } from "antd";
 import { useAppStore, OPTIONAL_VIEWS } from "@/store";
-import type { ActiveView } from "@/store";
+import type { ActiveView, MobileDashboardItem } from "@/store";
 
 /**
  * 移动端「功能模块」开关页（设计稿：16-feature-toggle.html）
@@ -135,10 +142,63 @@ const OPTIONS: OptionMeta[] = [
   },
 ];
 
+interface DashItemMeta {
+  key: MobileDashboardItem;
+  label: string;
+  icon: React.ReactNode;
+}
+
+const DASH_ITEM_META: DashItemMeta[] = [
+  {
+    key: "today_words",
+    label: "今日字数（蓝渐变卡）",
+    icon: <TrendingUp size={16} className="text-blue-500" />,
+  },
+  {
+    key: "due_cards",
+    label: "待复习闪卡（紫渐变卡）",
+    icon: <Layers size={16} className="text-purple-500" />,
+  },
+  {
+    key: "today_tasks_card",
+    label: "今日待办计数",
+    icon: <CheckSquare size={16} className="text-green-500" />,
+  },
+  {
+    key: "total_notes",
+    label: "笔记总数",
+    icon: <HomeIcon size={16} className="text-slate-500" />,
+  },
+  {
+    key: "quick_actions",
+    label: "快速操作（4 按钮）",
+    icon: <Zap size={16} className="text-amber-500" />,
+  },
+  {
+    key: "today_tasks_list",
+    label: "今日待办速览",
+    icon: <CheckSquare size={16} className="text-green-500" />,
+  },
+  {
+    key: "heatmap",
+    label: "30 天写作热力图",
+    icon: <BarChart3 size={16} className="text-blue-500" />,
+  },
+  {
+    key: "recent_notes",
+    label: "最近编辑",
+    icon: <Clock size={16} className="text-slate-500" />,
+  },
+];
+
 export default function FeatureTogglePage() {
   const navigate = useNavigate();
   const enabledViews = useAppStore((s) => s.enabledViews);
   const toggleEnabledView = useAppStore((s) => s.toggleEnabledView);
+  const mobileDashItems = useAppStore((s) => s.mobileDashboardItems);
+  const toggleMobileDashItem = useAppStore(
+    (s) => s.toggleMobileDashboardItem,
+  );
 
   function reset() {
     // 重置：除 cards 外全开
@@ -214,6 +274,22 @@ export default function FeatureTogglePage() {
           ))}
         </ListGroup>
 
+        {/* 主页 Dashboard 显示 */}
+        <SectionLabel
+          icon={<HomeIcon size={12} />}
+          text="主页 Dashboard 显示 · 移动端独有"
+        />
+        <ListGroup>
+          {DASH_ITEM_META.map((m) => (
+            <DashItemRow
+              key={m.key}
+              meta={m}
+              checked={mobileDashItems.has(m.key)}
+              onChange={() => toggleMobileDashItem(m.key)}
+            />
+          ))}
+        </ListGroup>
+
         <div className="px-4 py-4 text-center text-[11px] text-slate-400">
           💾 配置写入 app_config · 自动同步到桌面端
         </div>
@@ -264,6 +340,24 @@ function CoreRow({
         <div className="text-[11px] text-slate-400">{desc}</div>
       </div>
       <Switch checked disabled />
+    </div>
+  );
+}
+
+function DashItemRow({
+  meta,
+  checked,
+  onChange,
+}: {
+  meta: DashItemMeta;
+  checked: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="shrink-0">{meta.icon}</div>
+      <span className="flex-1 text-sm text-slate-700">{meta.label}</span>
+      <Switch checked={checked} onChange={onChange} />
     </div>
   );
 }
