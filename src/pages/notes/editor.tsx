@@ -651,6 +651,36 @@ function DesktopNoteEditorPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editorInstance, setEditorInstance] = useState<any | null>(null);
   const editorBodyRef = useRef<HTMLDivElement | null>(null);
+
+  // Ctrl/Cmd+A 全选笔记内容。
+  // 默认情况下焦点未落到 ProseMirror 编辑器时（比如刚打开笔记还没点入正文），
+  // WebView 会触发原生"选中整个文档"行为，把侧栏 / 工具栏 / 元属性区都选上。
+  // 这里仅在事件来源是 body 或编辑器主体内部（且不在 input/textarea/contenteditable
+  // 上）时拦截，转发到 editor.commands.selectAll —— 弹窗 / Modal / Select 等
+  // 由 Ant Design portal 挂到 body 末尾的元素不会被 editorBodyRef.contains 命中,
+  // 仍走原生默认行为，互不干扰。
+  useEffect(() => {
+    if (!editorInstance) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== "a" && e.key !== "A") return;
+
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      const tag = target.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+      if (target.isContentEditable) return; // ProseMirror 自身已在 PM keymap 处理
+
+      const insideEditorBody = !!editorBodyRef.current?.contains(target);
+      if (target !== document.body && !insideEditorBody) return;
+
+      e.preventDefault();
+      editorInstance.chain().focus().selectAll().run();
+    }
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [editorInstance]);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const toggleOutline = useAppStore((s) => s.toggleOutline);
   /**
