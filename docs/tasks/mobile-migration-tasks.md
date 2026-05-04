@@ -201,17 +201,14 @@
 
 #### T-M006 · 前端响应式布局 / 双布局决策 + 移动端布局实现
 
-- **状态**：`pending`
+- **状态**：`completed` ✅ · 完成日期：2026-05-04 · commit `cb8abad`
+- **决策**：方案 A 改良版 — 桌面 / 移动端各自独立组件，路由层用 `LayoutSwitch` + 各页 wrapper 模式（`useIsMobile()` 检测）
 - **价值**：⭐⭐⭐⭐⭐  成本：高
-- **方案候选**：
-  - 方案 A：响应式 Ant Design + Tailwind（一套代码两端用）
-  - 方案 B：antd-mobile 双布局（移动端独立组件库）
-- **子任务**：
-  - [ ] 决策：写 ADR `docs/architecture/decisions/ADR-XXX-mobile-ui.md`
-  - [ ] 新建 `src/components/layout/MobileLayout.tsx`（底部 5 Tab + Drawer + FAB）
-  - [ ] 新建 `useIsMobile()` hook（基于 `@tauri-apps/plugin-os` 检测平台）
-  - [ ] `App.tsx` 根据平台分发布局
-  - [ ] **桌面端不受影响**：`MobileLayout` 只在 `isMobile===true` 时渲染
+- **完成情况**：
+  - [x] `useIsMobile()` hook：基于 UA + 窗口宽度（< 768px）+ matchMedia 监听
+  - [x] `MobileLayout.tsx`：底部 5 Tab（主页/笔记/AI/待办/我的）+ 浮动 FAB + safe-area-inset 处理
+  - [x] `LayoutSwitch.tsx` 根分发器：`isMobile ? MobileLayout : AppLayout`
+  - [x] 桌面端零影响：所有页面用 wrapper 模式 — 桌面组件原样保留，末尾追加 `useIsMobile` 分发
 
 #### T-M007 · 砍 / 隐藏桌面专属设置项
 
@@ -222,34 +219,47 @@
   - [ ] 设置页（PC）的"全局快捷键 / 开机启动 / 自定义数据目录 / 多开实例 / 应用更新"分页加 `isMobile` 判断隐藏
   - [ ] `migration-splash` / `emergency-reminder` / `popout-note` 三类窗口在移动端改 Modal / 路由跳转
 
-#### T-M008 · Dashboard 主页（00-home 对应代码）
+#### T-M008 · Dashboard 主页 + 全套移动端 Tab/二级页
 
-- **状态**：`pending`
+- **状态**：`completed` ✅ · 完成日期：2026-05-04 · commits 8d2ae07 → 77c24a7（共 12 个 commit）
 - **价值**：⭐⭐⭐⭐⭐  成本：中
 - **依赖**：T-M006 完成
-- **子任务**：
-  - [ ] 新建 `src/pages/home/MobileHome.tsx`（按 `00-home.html` 原型实现）
-  - [ ] 复用 `commands::system::get_dashboard_stats` + `get_writing_trend`
-  - [ ] 30 天写作热力图（移动端版，缩小 cell）
-  - [ ] 4 个数据卡片 + 4 个快捷操作 + 今日待办速览 + 最近 2 条笔记
+- **完成情况**：5 Tab 主页 + 9 二级页 + 2 沉浸式全屏页（除 09-cards 外的所有原型）
+  - [x] **MobileHome（00-home）**：问候 + 4 数据卡 + 快速操作 + 今日待办速览 + 最近编辑 (`cb8abad`)
+  - [x] **MobileNotes（01-notes）**：顶栏 + 文件夹 chips + 置顶/最近分组 + 笔记卡片 (`8d2ae07`)
+  - [x] **MobileNoteEditor（02-note-edit）**：fixed 全屏 + 标题/正文 textarea + Markdown 工具栏 + 智能保存状态机 (`5ba96f5`)
+  - [x] **MobileSearch（03-search）**：autofocus + 300ms debounce + 关键词 mark 高亮 (`ddb5fe0`)
+  - [x] **MobileDaily（04-daily）**：月份切换 + 日历网格 + 当日笔记预览 + 编辑跳转 (`3cda6ef`)
+  - [x] **MobileTags（05-tags）**：标签云字号动态 + 9 色调色板 + 重命名/删除 (`6211e04`)
+  - [x] **MobileAi（06-ai）**：模型 chips + 4 快捷入口 + 对话历史 + 橙色 FAB (`8d2ae07`)
+  - [x] **MobileAiChat（07-ai-chat）** *沉浸式*：流式响应 + 模型 Drawer + 内联新增模型 (`29cd826`)
+  - [x] **MobileTasks（08-tasks）**：4 chips + 今日/本周/无截止/已完成分组 (`8d2ae07`)
+  - [x] **MobileMe（10-me）**：渐变 banner + 3 数据卡 + 4 板块设置入口 (`02aa6ef`)
+  - [x] **MobileTaskDetail（12-task-edit）** *沉浸式*：标题 + 子任务 + 元属性 + 推迟/完成 (`77c24a7`，T-M010)
+  - [x] **MobileTrash（13-trash）**：信息横幅 + 即将清理（红框）+ 最近删除 + 清空 (`5b55f48`)
+  - [x] **MobileQuickCreate（14-quick-create）**：2 渐变卡 + 6 来源 + 2 其他 (`4ca4728`，T-M009 一期)
+  - [x] **MobileQuickCapture（15-quick-capture）** *沉浸式*：橙色渐变 + 自动草稿 + 落到今日 (`2f0196d`，T-M009 二期)
+  - [x] **MobileFeatureToggle（16-feature-toggle）**：核心模块锁 + 8 可选模块 Switch (`b708c42`，T-M015 一期)
+- **顺手交付**：
+  - [x] `MobileAiModelModal` + `aiProviderPresets` 共享 lib（PROVIDERS / DEFAULT_URLS / MODEL_PRESETS）
+  - [x] FAB 路由黑名单 `PAGES_WITH_OWN_FAB = ["/ai"]`
+  - [x] 保存竞态修复：MobileNoteEditor flushAndExit() + bumpNotesRefresh，MobileNotes 监听 notesRefreshTick
+- **未做（下迭代）**：
+  - [ ] 30 天写作热力图（需 `get_writing_trend` 接入 + 自绘 grid）
+  - [ ] 09-cards 闪卡复习页（默认关，优先级低）
+  - [ ] MobileTaskDetail 截止时间 / 提醒分钟 / 重复规则 完整编辑器（移动端日期选择器）
 
 #### T-M009 · 新建抽屉 + 闪念捕获页
 
-- **状态**：`pending`
-- **价值**：⭐⭐⭐⭐⭐  成本：中
-- **子任务**：
-  - [ ] 新建 `src/pages/quick-create/index.tsx`（按 `14-quick-create.html` 原型）
-  - [ ] 新建 `src/pages/quick-capture/index.tsx`（按 `15-quick-capture.html` 原型）
-  - [ ] 闪念捕获实现自动保存草稿到 `app_config`（key=`quick_capture_draft`）
-  - [ ] 集成剪贴板检测（`tauri-plugin-clipboard-manager`）
+- **状态**：`completed` ✅ · 一期 commit `4ca4728` / 二期 commit `2f0196d`
+- **完成情况**：见 T-M008
+- **未做**：剪贴板自动检测 URL（要 `tauri-plugin-clipboard-manager`，移动端原生集成下迭代）
 
 #### T-M010 · 任务详情页（12-task-edit 对应代码）
 
-- **状态**：`pending`
-- **价值**：⭐⭐⭐⭐  成本：中
-- **子任务**：
-  - [ ] 新建 `src/pages/tasks/TaskDetail.tsx`（按 `12-task-edit.html` 原型）
-  - [ ] 复用 `commands::tasks::*`（update / list_subtasks / add_link / snooze_reminder）
+- **状态**：`completed` ✅ · commit `77c24a7`
+- **完成情况**：见 T-M008
+- **未做**：日期选择器 / 重复规则 / 子任务拖拽排序
   - [ ] 子任务拖拽排序（react-dnd 移动端兼容）
 
 #### T-M011 · 图谱页移动端简化版
@@ -366,10 +376,10 @@
 |-------|-------|--------|------|
 | Phase 0 原型设计 | 1 | 1 | ✅ `completed` |
 | Phase 1 探针 | 5 | 4 | `in_progress` (T-M001~T-M004 ✅，T-M005 iOS 阻塞) |
-| Phase 2 移植绿区 | 6 | 0 | `pending` |
-| Phase 3 黄区适配 | 4 | 0 | `pending` |
+| Phase 2 移植绿区 | 6 | 4 | `in_progress` (T-M006/008/009/010 ✅，T-M007/011 待) |
+| Phase 3 黄区适配 | 4 | 1 | `in_progress` (T-M015 一期 ✅，T-M012/013/014 待) |
 | Phase 4 平台特化 | 5 | 0 | `pending` |
-| **合计** | **21** | **1** | — |
+| **合计** | **21** | **10** | — |
 
 ---
 
@@ -417,3 +427,8 @@ Phase 4 (依赖 Phase 3)
   完成；Android target `cargo check` 通过（0 errors）；同时顺手完成 T-M003（capabilities
   移动端版本）；reqwest 切到 rustls-tls；rust-s3 / pdfium-render / calamine / docx-rs / 
   tauri-plugin-{updater,autostart,global-shortcut} 全部移到 desktop target dependencies
+- **2026-05-04** ✅ T-M006 / T-M008 / T-M009 / T-M010 / T-M015 一期完成
+  （commits `cb8abad` → `77c24a7`，共 12 个 commit）
+  覆盖 17 页设计中的 16 页（除 09-cards 外）；
+  含智能保存状态机、流式 AI 响应、模型 Drawer、自动草稿、子任务等关键交互；
+  桌面端零退化（wrapper 模式不影响桌面组件）
