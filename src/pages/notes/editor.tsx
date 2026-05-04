@@ -595,7 +595,7 @@ function MetaBar({
   );
 }
 
-export default function NoteEditorPage() {
+function DesktopNoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
@@ -1992,4 +1992,12 @@ export default function NoteEditorPage() {
       />
     </div>
   );
+}
+
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileNoteEditor } from "./MobileNoteEditor";
+
+export default function NoteEditorPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? <MobileNoteEditor /> : <DesktopNoteEditorPage />;
 }
