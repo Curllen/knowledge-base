@@ -10,7 +10,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Pencil,
+  Share2,
+  Download,
 } from "lucide-react";
+import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
+import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
+import { exportWebDavBackend, type Envelope } from "@/lib/configShare";
 import { Modal, Form, Input, message } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
@@ -51,6 +56,9 @@ export function MobileSync() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form] = Form.useForm<WebDavForm>();
+  // 配置分享 / 导入
+  const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // 监听后端推/拉进度事件，渲染到对应 backend 卡片下
   useEffect(() => {
@@ -225,13 +233,22 @@ export function MobileSync() {
           <ChevronLeft size={24} className="text-slate-700" />
         </button>
         <h1 className="text-base font-semibold">云端同步</h1>
-        <button
-          onClick={openAdd}
-          aria-label="新增"
-          className="flex h-10 w-10 items-center justify-center text-[#1677FF]"
-        >
-          <Plus size={22} />
-        </button>
+        <div className="flex">
+          <button
+            onClick={() => setImportOpen(true)}
+            aria-label="导入配置"
+            className="flex h-10 w-10 items-center justify-center text-slate-600"
+          >
+            <Download size={20} />
+          </button>
+          <button
+            onClick={openAdd}
+            aria-label="新增"
+            className="flex h-10 w-10 items-center justify-center text-[#1677FF]"
+          >
+            <Plus size={22} />
+          </button>
+        </div>
       </header>
 
       {/* 信息横幅 */}
@@ -270,6 +287,7 @@ export function MobileSync() {
                 onTest={() => testConn(b.id)}
                 onEdit={() => openEdit(b)}
                 onDelete={() => remove(b)}
+                onShare={() => setShareEnv(exportWebDavBackend(b))}
               />
             ))}
           </div>
@@ -320,6 +338,20 @@ export function MobileSync() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 配置分享 */}
+      <ShareConfigModal
+        open={shareEnv !== null}
+        onClose={() => setShareEnv(null)}
+        envelope={shareEnv}
+      />
+
+      {/* 配置导入 */}
+      <ImportConfigModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => void load()}
+      />
     </div>
   );
 }
@@ -343,6 +375,7 @@ function BackendCard({
   onTest,
   onEdit,
   onDelete,
+  onShare,
 }: {
   backend: SyncBackend;
   busy: boolean;
@@ -352,6 +385,7 @@ function BackendCard({
   onTest: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onShare: () => void;
 }) {
   const lastPush = backend.lastPushTs
     ? relativeTime(backend.lastPushTs)
@@ -437,13 +471,20 @@ function BackendCard({
           <CloudDownload size={14} /> 拉取
         </button>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
+      <div className="mt-2 grid grid-cols-4 gap-2">
         <button
           onClick={onTest}
           disabled={busy}
           className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 active:bg-slate-50 disabled:opacity-50"
         >
           <Plug size={12} /> 测试
+        </button>
+        <button
+          onClick={onShare}
+          disabled={busy}
+          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 active:bg-slate-50 disabled:opacity-50"
+        >
+          <Share2 size={12} /> 分享
         </button>
         <button
           onClick={onEdit}

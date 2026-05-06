@@ -10,7 +10,12 @@ import {
   MessageSquarePlus,
   Plus,
   Link2,
+  Share2,
+  Download,
 } from "lucide-react";
+import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
+import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
+import { exportAiModel, type Envelope } from "@/lib/configShare";
 import { message } from "antd";
 import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiModel } from "@/types";
@@ -74,6 +79,8 @@ export function MobileAi() {
   const [models, setModels] = useState<AiModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [addModelOpen, setAddModelOpen] = useState(false);
+  const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -131,12 +138,31 @@ export function MobileAi() {
               {conversations.length} 个对话
             </div>
           </div>
-          <button
-            aria-label="搜索"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
-          >
-            <Search size={18} className="text-slate-700" />
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (defaultModel) setShareEnv(exportAiModel(defaultModel));
+                else message.warning("请先配置一个 AI 模型");
+              }}
+              aria-label="分享当前模型"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
+            >
+              <Share2 size={18} className="text-slate-700" />
+            </button>
+            <button
+              onClick={() => setImportOpen(true)}
+              aria-label="导入模型"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
+            >
+              <Download size={18} className="text-slate-700" />
+            </button>
+            <button
+              aria-label="搜索"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
+            >
+              <Search size={18} className="text-slate-700" />
+            </button>
+          </div>
         </div>
 
         {/* 模型 chips */}
@@ -250,6 +276,18 @@ export function MobileAi() {
           void load();
         }}
         okText="保存"
+      />
+
+      <ShareConfigModal
+        open={shareEnv !== null}
+        onClose={() => setShareEnv(null)}
+        envelope={shareEnv}
+      />
+
+      <ImportConfigModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => void load()}
       />
     </div>
   );
