@@ -24,7 +24,13 @@ import Subscript from "@tiptap/extension-subscript";
 import { FigureImage } from "./FigureExtension";
 import { HeadingFold, HEADING_FOLD_REFRESH, HEADING_FOLD_KEY } from "./HeadingFold";
 import { calcEditorStats } from "@/lib/textStats";
-import { FontSize, LineHeight, Indent } from "./TextStyleExtras";
+import {
+  FontSize,
+  LineHeight,
+  Indent,
+  ParagraphWithIndent,
+  HeadingWithIndent,
+} from "./TextStyleExtras";
 // tiptap-markdown 未提供 TS 声明，用 import 后以 any 访问
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { Markdown } from "tiptap-markdown";
@@ -1036,7 +1042,14 @@ export function TiptapEditor({
         // 下方手动引入 Code 并清空 excludes，让 fontSize/color/highlight 等可与
         // code mark 同时存在
         code: false,
+        // 用 ParagraphWithIndent / HeadingWithIndent 替换默认实现：
+        // 在 addStorage().markdown.serialize 里把 indent>0 的段落/标题输出为
+        // HTML（<p data-indent="N">…</p>），让缩进能存进 .md 并往返还原。
+        paragraph: false,
+        heading: false,
       }),
+      ParagraphWithIndent,
+      HeadingWithIndent,
       Code.configure({
         HTMLAttributes: {},
       }).extend({
@@ -1256,39 +1269,56 @@ export function TiptapEditor({
 
         return false;
       },
-      handleDrop: (_view, event) => {
-        const videos = collectVideoFiles(event.dataTransfer);
-        if (videos.length > 0) {
-          event.preventDefault();
-          handleVideoFiles(videos, editor, VIDEO_MAX_DROP_BYTES);
-          return true;
-        }
-        const images = collectImageFiles(event.dataTransfer);
-        if (images.length > 0) {
-          event.preventDefault();
-          handleImageFiles(images, editor);
-          return true;
-        }
-        const texts = collectTextFiles(event.dataTransfer);
-        if (texts.length > 0) {
-          event.preventDefault();
-          handleTextFiles(texts, editor);
-          return true;
-        }
-        const { files: attachments, blocked } = collectAttachmentFiles(
-          event.dataTransfer,
-        );
-        if (blocked.length > 0) {
-          message.warning(
-            `已拦截 ${blocked.length} 个可执行/脚本文件（禁止作为附件）`,
-          );
-        }
-        if (attachments.length > 0) {
-          event.preventDefault();
-          handleAttachmentFiles(attachments, editor);
-          return true;
-        }
-        return false;
+      // Why 不用 editorProps.handleDrop：ProseMirror 内部 editHandlers.drop 在调用
+      // handleDrop 前会先 view.posAtCoords(...)，drop 落在编辑器空白/底部 padding 等
+      // 无法 resolve 出 doc position 的位置时直接 return，handleDrop 永远不被调用。
+      // 改走 handleDOMEvents.drop（plugin 层 DOM 监听，先于 editHandlers 触发，
+      // 不依赖 posAtCoords 的成功）。返回 true 即拦截，editHandlers 不再处理。
+      //
+      // 仅处理 OS 外部文件拖入（DataTransfer.types 含 "Files"），ProseMirror 节点内部
+      // 拖拽（view.dragging 非空）原样放行给 editHandlers，保持原有节点重排行为。
+      handleDOMEvents: {
+        drop: (view, event) => {
+          const dt = (event as DragEvent).dataTransfer;
+          console.log("[pm-drop] handleDOMEvents.drop fired",
+            "types=", dt ? Array.from(dt.types) : null,
+            "files=", dt?.files?.length ?? 0,
+            "view.dragging=", !!view.dragging);
+          if (!dt) return false;
+          const isOsFileDrop = Array.from(dt.types ?? []).includes("Files");
+          if (!isOsFileDrop || view.dragging) return false;
+
+          const videos = collectVideoFiles(dt);
+          if (videos.length > 0) {
+            event.preventDefault();
+            handleVideoFiles(videos, editor, VIDEO_MAX_DROP_BYTES);
+            return true;
+          }
+          const images = collectImageFiles(dt);
+          if (images.length > 0) {
+            event.preventDefault();
+            handleImageFiles(images, editor);
+            return true;
+          }
+          const texts = collectTextFiles(dt);
+          if (texts.length > 0) {
+            event.preventDefault();
+            handleTextFiles(texts, editor);
+            return true;
+          }
+          const { files: attachments, blocked } = collectAttachmentFiles(dt);
+          if (blocked.length > 0) {
+            message.warning(
+              `已拦截 ${blocked.length} 个可执行/脚本文件（禁止作为附件）`,
+            );
+          }
+          if (attachments.length > 0) {
+            event.preventDefault();
+            handleAttachmentFiles(attachments, editor);
+            return true;
+          }
+          return false;
+        },
       },
     },
   });

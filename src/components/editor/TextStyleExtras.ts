@@ -7,10 +7,14 @@
  *
  * Markdown 序列化由 tiptap-markdown 走 prosemirror-markdown：
  * - mark 类型支持有限（粗体/斜体/code/link/strike），fontSize 等扩展属性会被忽略
- * - 这是有意 trade-off：字号/行距/缩进只在编辑器内可视化，导出 md 不保留
- *   （Notion/语雀 导出 md 也不保字号，业界一致）
+ * - 字号/行距：只在编辑器内可视化，导出 md 不保留（Notion/语雀同款）
+ * - 缩进：indent>0 时导出为 HTML <p data-indent="N">…</p>（依赖 Markdown 配置
+ *   html: true），保证保存→重读后缩进还原；详见 ParagraphWithIndent / HeadingWithIndent
  */
-import { Extension } from "@tiptap/core";
+import { Extension, getHTMLFromFragment } from "@tiptap/core";
+import Paragraph from "@tiptap/extension-paragraph";
+import Heading from "@tiptap/extension-heading";
+import { Fragment } from "@tiptap/pm/model";
 import { TextStyle } from "@tiptap/extension-text-style";
 
 declare module "@tiptap/core" {
@@ -188,5 +192,81 @@ export const Indent = Extension.create({
           return false;
         },
     };
+  },
+  // Tab / Shift-Tab：列表内由 ListItem 的 sinkListItem / liftListItem 优先处理
+  // （StarterKit 中 ListItem 的 keymap 注册在前，先 return true 即停止链式传播）；
+  // 段落/标题里冒泡到这里 → 调 indent / outdent。命令成功 → return true 停止默认
+  // Tab 行为（避免焦点跳出编辑器）；命令失败（已到 maxLevel / 已到 0）→ return false
+  // 让事件继续传播。
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => this.editor.commands.indent(),
+      "Shift-Tab": () => this.editor.commands.outdent(),
+    };
+  },
+});
+
+/**
+ * paragraph / heading 的 markdown 序列化：indent>0 时输出 HTML，让 Markdown
+ * 文件保留缩进信息（`html: true` + parseHTML 闭环）；indent=0 时退回 prosemirror-markdown
+ * 默认序列化（普通段落 / # 标题），保持 .md 可读性。
+ *
+ * 必须把 StarterKit 的 paragraph / heading 关掉换成这两个，否则会和我们这里的
+ * addStorage 重名冲突 —— 详见 TiptapEditor.tsx 的 StarterKit.configure。
+ */
+function makeIndentMarkdownStorage(parentStorage: Record<string, unknown>) {
+  return {
+    ...parentStorage,
+    markdown: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      serialize(state: any, node: any) {
+        const indent = Number(node.attrs?.indent || 0);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const editor = (this as any).editor;
+        const htmlAllowed = !!editor?.storage?.markdown?.options?.html;
+
+        if (indent > 0 && htmlAllowed) {
+          // 走 HTML：renderHTML 已写入 data-indent + padding-left，
+          // 解析端 markdown-it 把 HTML 块原样保留 → ProseMirror 重建时
+          // paragraph/heading 的 parseHTML 从 data-indent 取回 indent attr。
+          const html = getHTMLFromFragment(Fragment.from(node), node.type.schema);
+          state.write(html);
+          state.closeBlock(node);
+          return;
+        }
+
+        // 退回原版：paragraph → 行内 + 空行；heading → '#' * level + 空格 + 行内 + 空行
+        const name = node.type.name;
+        if (name === "heading") {
+          const level = Math.max(1, Number(node.attrs?.level || 1));
+          state.write("#".repeat(level) + " ");
+          state.renderInline(node);
+          state.closeBlock(node);
+          return;
+        }
+        // paragraph / 默认
+        state.renderInline(node);
+        state.closeBlock(node);
+      },
+      parse: {},
+    },
+  };
+}
+
+export const ParagraphWithIndent = Paragraph.extend({
+  addStorage() {
+    return makeIndentMarkdownStorage(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((this as any).parent?.() ?? {}) as Record<string, unknown>,
+    );
+  },
+});
+
+export const HeadingWithIndent = Heading.extend({
+  addStorage() {
+    return makeIndentMarkdownStorage(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((this as any).parent?.() ?? {}) as Record<string, unknown>,
+    );
   },
 });

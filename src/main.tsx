@@ -13,21 +13,22 @@ dayjs.locale("zh-cn");
 // WebView 接管拖放；未保护区域松手 / 点到 file:// 链接时，浏览器默认"把文件当 URL 导航"，
 // 被 CSP 拒绝后回退到 http://tauri.localhost/ (Tauri upstream bug #9725)。
 //
-// 使用 capture 阶段 + 只对 OS 文件拖放生效，避免干扰 antd Tree / DOM 内部拖拽。
-// 对 click 的拦截走 capture，比 ProseMirror / React 合成事件更早处理。
+// ⚠ dragover/drop 必须走 **bubble 阶段**（不能加 capture: true）。
+// 因为 prosemirror-view 1.41.x 的 `eventBelongsToView` 第一行就检查
+// `if (event.defaultPrevented) return false`，capture 阶段提前 preventDefault
+// 会让 ProseMirror 跳过整个 drop dispatch（含 editorProps.handleDOMEvents.drop /
+// handleDrop / Dropcursor），导致编辑器拖入文件完全无反应。bubble 阶段：
+// 编辑器自己的 handleDOMEvents.drop 先跑并 preventDefault，再冒到这里时已是
+// 编辑器外区域 → 兜底防导航；两边互不踩坑。
 const isOsFileDrag = (e: DragEvent) =>
   !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
 
-window.addEventListener(
-  "dragover",
-  (e) => { if (isOsFileDrag(e)) e.preventDefault(); },
-  true,
-);
-window.addEventListener(
-  "drop",
-  (e) => { if (isOsFileDrag(e)) e.preventDefault(); },
-  true,
-);
+window.addEventListener("dragover", (e) => {
+  if (isOsFileDrag(e)) e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  if (isOsFileDrag(e)) e.preventDefault();
+});
 
 // 点击 file:// 链接 → 业务层(TiptapEditor)应该已 preventDefault 并调 openPath；
 // 这里做最外层兜底，阻止"链接没被处理时"浏览器默认导航到 file:// 而回退到 tauri.localhost
